@@ -110,6 +110,38 @@ where transmitting without a licence is illegal, and an assistant that can call
 a transmitter should not be able to do so by accident. Refusals name the exact
 variable to set.
 
+### Turning transmit on
+
+The flag is read from the **server's** environment at startup, not from the
+shell you type in, so exporting it in your terminal does nothing. Put it in the
+MCP registration:
+
+```bash
+claude mcp add fishball-sdr -e SDR_MCP_ALLOW_TX=1 -- \
+    /absolute/path/to/Fishball7020-mcp/.venv/bin/fishball-sdr-mcp
+```
+
+or in `.mcp.json`:
+
+```json
+{ "mcpServers": { "fishball-sdr": {
+    "command": "/absolute/path/to/Fishball7020-mcp/.venv/bin/fishball-sdr-mcp",
+    "env": { "SDR_MCP_ALLOW_TX": "1" } } } }
+```
+
+**Restart your MCP client afterwards.** The environment is fixed when the
+server process starts, so changing the registration mid-session has no effect
+on the already-running server — the transmit tools will keep refusing until
+the client is restarted. `sdr_tx_status` reports what the running server
+actually believes:
+
+```
+| Transmitting allowed | no (set SDR_MCP_ALLOW_TX=1) |
+```
+
+Leave the flag off unless you are transmitting into a dummy load or a shielded
+setup, or you hold a licence for the frequency you intend to use.
+
 - `sdr_tx_disable` and `sdr_tx_status` are **never** gated. An off switch that
   can be unavailable is not an off switch.
 - `sdr_tx_disable` also runs on server shutdown, so a crashed client cannot
@@ -158,6 +190,18 @@ next "response line".
 digital amplitudes of 8191 and 32767 produced +12.7 dB and +24.8 dB relative to
 2047 (expected +12.0 and +24.1) with no rise in distortion. Scaling transmit to
 ±2047, as the receive side does, emits 24 dB low.
+
+**Set TX gain AFTER starting the stream, not before.** Starting a TX buffer
+fires the kernel's `preenable` hook, which on firmware with the TX-mute patch
+unmutes by restoring a *cached* attenuation - overwriting whatever you wrote
+beforehand. Measured: asking for -10 dB before the stream put -60 dB on the
+wire. The transmit tools here do it in the right order; if you drive the board
+yourself, do the same.
+
+**The TX mute costs no output power.** Swept over a 50 dB attenuated loopback:
+commanded and applied attenuation matched to 0.01 dB at every point including
+0 dB, and received level tracked the commanded gain across a 40 dB range within
+1.9 dB. Full output is fully available.
 
 **The transmitter idles hot on stock firmware.** The AD9361 comes up in ENSM
 `fdd` with the synthesiser running and 10 dB of attenuation, so the TX port

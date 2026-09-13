@@ -727,7 +727,6 @@ def sdr_transmit_iq(
             raise ValueError(f"no such file: {src}")
         r = radio()
         r.check_tx_frequency(lo_hz)
-        applied_gain = r.set_tx_gain(tx_gain_db)
 
         iq = _load_iq(src, file_format)
         if not iq:
@@ -749,6 +748,12 @@ def sdr_transmit_iq(
                 pass
 
         written = r.transmit_samples(values, cyclic)
+        # Gain is set AFTER the buffer starts, and this order is load-bearing.
+        # Starting a TX buffer fires the kernel's preenable hook, which unmutes
+        # by restoring a CACHED attenuation - clobbering anything written
+        # beforehand. Measured: asking for -10 dB before the stream produced
+        # -60 dB on the wire. Writing it afterwards lands last and wins.
+        applied_gain = r.set_tx_gain(tx_gain_db)
         rate = r.read_int(PHY, "voltage0", "sampling_frequency", output=True)
         duration = len(iq) / rate if rate else 0.0
         log(f"TX IQ file={src.name} lo={lo_hz} samples={len(iq)} cyclic={cyclic} "
@@ -810,7 +815,6 @@ def sdr_transmit_waveform(
         import random
         r = radio()
         r.check_tx_frequency(lo_hz)
-        applied_gain = r.set_tx_gain(tx_gain_db)
         rate = r.read_int(PHY, "voltage0", "sampling_frequency", output=True)
         n = samples
         iq: list[complex] = []
@@ -839,6 +843,8 @@ def sdr_transmit_waveform(
             except Exception:
                 pass
         written = r.transmit_samples(values, cyclic=True)
+        # After the stream starts - see the note in sdr_transmit_iq.
+        applied_gain = r.set_tx_gain(tx_gain_db)
         log(f"TX WAVEFORM {shape} lo={lo_hz} bw={bandwidth_hz} scale={scale}")
         payload = {"shape": shape, "lo_hz": lo_hz, "bandwidth_hz": bandwidth_hz,
                    "samples": n, "sample_rate_hz": rate, "bytes_written": written,

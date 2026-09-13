@@ -1,0 +1,8 @@
+Metadata-Version: 2.4
+Name: fishball-sdr-mcp
+Version: 0.1.0
+Summary: MCP server for the Fishball7020 / PlutoSky SDR (Zynq-7020 + AD9361)
+Requires-Python: >=3.10
+Requires-Dist: mcp>=2.0
+Provides-Extra: fast
+Requires-Dist: numpy>=1.21; extra == "fast"

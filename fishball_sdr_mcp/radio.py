@@ -454,6 +454,10 @@ class Radio:
 
     def transmit_samples(self, values: list[int], cyclic: bool) -> int:
         did = self.device_id(TX)
+        # A cyclic buffer left running makes the next OPEN fail with EBUSY, so
+        # replace rather than refuse: transmitting again is a perfectly
+        # reasonable thing to ask for, and the error was unhelpful.
+        self._retry(lambda c: (c.close_buffer(did), None)[1])
         dev = self.devices()[TX]
         total = len(dev.scan_channels())
         mask = mask_for([0, 1], total)
