@@ -1,0 +1,23 @@
+[project]
+name = "fishball-sdr-mcp"
+version = "0.1.0"
+description = "MCP server for the Fishball7020 / PlutoSky SDR (Zynq-7020 + AD9361)"
+requires-python = ">=3.10"
+# Only the MCP SDK. The board is reached over libiio's network protocol with
+# plain sockets (see fishball_sdr_mcp/iiod.py), so there is no pylibiio
+# dependency and no libiio version to match against the firmware.
+dependencies = ["mcp>=2.0"]
+
+[project.optional-dependencies]
+# numpy makes the FFT faster; dsp.py falls back to a pure-Python transform.
+fast = ["numpy>=1.21"]
+
+[project.scripts]
+fishball-sdr-mcp = "fishball_sdr_mcp.server:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["fishball_sdr_mcp"]

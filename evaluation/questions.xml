@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+Evaluation set for fishball_sdr_mcp, following the mcp-builder skill's Phase 4.
+
+Every question is answerable with READ-ONLY tools, needs more than one call or
+some reasoning over what comes back, and has a single verifiable answer. Each
+answer below was obtained from a real Fishball7020 board and checked by hand.
+
+Deliberately absent: anything that depends on the RF environment ("which FM
+station is strongest here"). Those answers drift with the antenna, the weather
+and the time of day, and the skill requires answers to be stable. The questions
+here turn on the device tree, the driver's advertised capabilities, and
+arithmetic over reported rates - all of which are properties of the firmware
+rather than of the afternoon.
+
+They also do not depend on how the radio happens to be tuned when the
+evaluation runs, because any tool call could have retuned it beforehand.
+-->
+<evaluation>
+
+  <qa_pair>
+    <question>How many IIO devices does this SDR expose in total?</question>
+    <answer>4</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>Captured samples come from one specific IIO device. Identify the device that provides buffered receive scan channels, and state how many scan channels it has.</question>
+    <answer>cf-ad9361-lpc, 4 scan channels</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>Two of this board's IIO devices expose buffered scan channels. Counting both, how many scan channels are there altogether?</question>
+    <answer>8</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>How many distinct automatic gain control modes does the receiver accept?</question>
+    <answer>4 (manual, fast_attack, slow_attack, hybrid)</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>The AD9361's enable state machine supports a fixed set of modes. How many are available on this firmware?</question>
+    <answer>6 (sleep, wait, alert, fdd, pinctrl, pinctrl_fdd_indep)</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>Ignoring any FPGA decimation, what is the lowest sample rate in Hz that the AD9361 converter itself can be configured for?</question>
+    <answer>2083333 Hz</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>The receive capture device advertises exactly two selectable sample rates, and the ratio between them is the FPGA channel filter's decimation factor. What is that factor?</question>
+    <answer>8</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>What is the ratio between the widest and the narrowest analog RF bandwidth the receiver will accept? Give a whole number.</question>
+    <answer>280 (56000000 Hz / 200000 Hz)</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>How many independent DDS tone generators does the transmit device provide?</question>
+    <answer>8</answer>
+  </qa_pair>
+
+  <qa_pair>
+    <question>The AD9361 reports its receive clock chain as a series of named stages from the PLL down to the sample rate. How many stages are named in that chain?</question>
+    <answer>6 (BBPLL, ADC, R2, R1, RF, RXSAMP)</answer>
+  </qa_pair>
+
+</evaluation>
