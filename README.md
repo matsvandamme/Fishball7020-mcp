@@ -31,10 +31,18 @@ The board's firmware and FPGA build system live in a companion repository,
 git clone https://github.com/matsvandamme/Fishball7020-mcp.git
 cd Fishball7020-mcp
 python3 -m venv .venv
-.venv/bin/pip install mcp
+.venv/bin/pip install -e .
 
-claude mcp add fishball-sdr -- "$PWD/.venv/bin/python" -m fishball_sdr_mcp
+claude mcp add fishball-sdr -- "$PWD/.venv/bin/fishball-sdr-mcp"
 ```
+
+`-e .` installs the package into the venv, which puts a `fishball-sdr-mcp`
+launcher on the venv's `bin/`. Use that rather than `python -m
+fishball_sdr_mcp`: your MCP client starts the server from its own working
+directory, not this one, so a bare `-m` invocation will not find the package.
+
+Note the venv records absolute paths. If you move this directory, delete
+`.venv` and recreate it.
 
 Then ask for `sdr_get_status`. If the board answers, you're done.
 
