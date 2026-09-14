@@ -50,6 +50,24 @@ jobs:
       - name: Protocol smoke test
         run: python evaluation/smoke_test.py
 
+      - name: The Agent Skill is valid
+        run: |
+          python - <<'PY'
+          import pathlib, re, sys
+          p = pathlib.Path(".claude/skills/fishball-sdr-mcp/SKILL.md")
+          t = p.read_text(); fm = t.split("---")[1]
+          g = lambda k: (re.search(rf"^{k}:\s*(.+)$", fm, re.M) or [None, ""])[1].strip()
+          name, desc = g("name"), g("description")
+          assert re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", name), f"bad name {name!r}"
+          assert name == p.parent.name, "name must match its directory"
+          assert 1 <= len(desc) <= 1024, f"description is {len(desc)} chars"
+          for f in p.parent.rglob("*.md"):
+              for link in re.findall(r"\]\(([^)#][^)]*)\)", f.read_text()):
+                  if link.startswith("http"): continue
+                  assert (f.parent / link).resolve().exists(), f"{f}: broken link {link}"
+          print(f"skill {name} valid, description {len(desc)} chars, links resolve")
+          PY
+
       - name: The evaluation questions are well-formed
         run: |
           python - <<'PY'

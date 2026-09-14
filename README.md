@@ -49,6 +49,15 @@ Then ask for `sdr_get_status`. If the board answers, you're done.
 Not sure where your board is? `iio_attr -S` scans and prints it. The default is
 `ip:192.168.2.1`, the USB Ethernet gadget.
 
+## Working on this server
+
+`.claude/skills/fishball-sdr-mcp/` is an [Agent Skill](https://agentskills.io/specification):
+if you use Claude Code it loads automatically here, carrying the server's own
+conventions and the hardware facts that keep catching people out — the power
+amplifier and what it means for a loopback, 12-bit receive against 16-bit
+transmit, why `hardwaregain` is an index rather than a gain, the IIOD protocol
+gotchas, and that stdout belongs to JSON-RPC. Harmless if you don't use an agent.
+
 ## Requirements
 
 Python 3.10+, and a Fishball7020 reachable over libiio. That's it.
