@@ -43,6 +43,13 @@ DEFAULT_HOST = "192.168.2.1"
 DEFAULT_PORT = 30431
 DEFAULT_TIMEOUT = 10.0
 
+# Samples per channel in a single OPEN/READBUF round. IIOD times out on very
+# large single transfers: 1,048,576 samples (4 MB) succeeds over the USB
+# Ethernet gadget, 4,194,304 (16 MB) fails with -110 ETIMEDOUT. Chunking well
+# under that lets a caller ask for an arbitrarily long capture. Raising the
+# client-side timeout does NOT help - the timeout is the board's, not ours.
+MAX_SAMPLES_PER_TRANSFER = 262_144
+
 
 class IiodError(OSError):
     """An IIOD command returned a negative errno."""
@@ -179,16 +186,29 @@ class Iiod:
 
         Interleaving follows the scan mask in channel order, so with two
         channels enabled the result is I0, Q0, I1, Q1, ...
+
+        Long captures are split across several READBUF rounds on one open
+        buffer (see MAX_SAMPLES_PER_TRANSFER). Successive rounds are contiguous
+        as long as the DMA keeps up; if it overflows there can be a gap between
+        them, which matters for demodulation but not for a spectrum estimate.
         """
-        self._send(f"OPEN {device} {nsamples} {mask}")
+        per_open = min(nsamples, MAX_SAMPLES_PER_TRANSFER)
+        sample_bytes = bytes_per_sample * nchannels
+        self._send(f"OPEN {device} {per_open} {mask}")
         self._status(f"OPEN {device}")
         try:
-            nbytes = nsamples * bytes_per_sample * nchannels
-            command = f"READBUF {device} {nbytes}"
-            self._send(command)
-            got = self._status(command)
-            self._f.readline()                  # mask echo
-            data = self._read_exactly(got)
+            data = bytearray()
+            remaining = nsamples
+            while remaining > 0:
+                want = min(remaining, per_open)
+                command = f"READBUF {device} {want * sample_bytes}"
+                self._send(command)
+                got = self._status(command)
+                self._f.readline()              # mask echo
+                if got == 0:                    # no progress; stop rather than spin
+                    break
+                data += self._read_exactly(got)
+                remaining -= got // sample_bytes
         finally:
             try:
                 self._send(f"CLOSE {device}")
