@@ -203,6 +203,22 @@ commanded and applied attenuation matched to 0.01 dB at every point including
 0 dB, and received level tracked the commanded gain across a 40 dB range within
 1.9 dB. Full output is fully available.
 
+**An empty serial makes other tools refuse the board.** This server connects by
+URI and is unaffected, but SDRangel identifies Plutos by serial number, and
+devkit firmware built before September 2026 reported an empty one — the board's
+Winbond W25Q128 flash never emits the `SPI-NOR-UniqueID` line the boot script
+greps for. SDRangel then lists `PlutoSDR0 TBD` and fails with `open serial TBD
+failed`. Current devkit firmware mints a persistent serial on first boot without
+changing the gadget MAC or interface name; `sdr_get_status` reports it. If you
+see a `TBD`, reflash from the current
+[devkit](https://github.com/matsvandamme/fishball7020-fpga-devkit#troubleshooting).
+
+**Two tools cannot hold the board at once.** When SDRangel (or anything else)
+opens the Pluto over USB, the firmware reconfigures the composite device and
+the USB Ethernet gadget disappears — so `ip:192.168.2.1` stops answering and
+every tool here fails with a connection error until that application closes.
+Not a fault; just mutually exclusive.
+
 **The transmitter idles hot on stock firmware.** The AD9361 comes up in ENSM
 `fdd` with the synthesiser running and 10 dB of attenuation, so the TX port
 leaks LO with nothing in the DAC. This server quiets it at startup unless
