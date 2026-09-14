@@ -41,6 +41,11 @@ _ERRNO_ADVICE = {
         "the device had no data ready in time. Try fewer samples, or check that "
         "the sample rate is set to something the link can sustain."),
     errno.EPERM: "the operation was refused by the device.",
+    errno.ETIMEDOUT: (
+        "the board did not finish the transfer in time. For a capture this "
+        "usually means too many samples in one go - the client library chunks "
+        "long captures, so a bare ETIMEDOUT here points at a slow or "
+        "congested link rather than the request size."),
     errno.ENOMEM: (
         "the board could not allocate a buffer that large. Ask for fewer "
         "samples."),
