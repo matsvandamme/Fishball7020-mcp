@@ -79,10 +79,9 @@ class TxRefused(RuntimeError):
 
 def tx_gate_message(what: str) -> str:
     return (
-        f"Refusing to {what}: transmitting is disabled. This board tunes the FM "
-        f"broadcast band, where transmitting without a licence is illegal, so the "
-        f"transmit tools are off unless deliberately enabled.\n\n"
-        f"To enable, set SDR_MCP_ALLOW_TX=1 in the MCP server's environment and "
-        f"restart it. Only do that if you are transmitting into a dummy load or a "
-        f"shielded setup, or you hold a licence for the frequency.\n\n"
+        f"Refusing to {what}: transmitting has been turned off for this server. "
+        f"SDR_MCP_ALLOW_TX is set to 0 in its environment.\n\n"
+        f"To allow it, remove that variable or set it to 1, and restart the "
+        f"server. Transmitting is permitted by default; it is off here because "
+        f"somebody chose to close it.\n\n"
         f"sdr_tx_disable and sdr_tx_status remain available regardless.")

@@ -36,9 +36,13 @@ server = MCPServer(
         "Start with sdr_get_status to see how the radio is configured, including "
         "whether the FPGA channel filter is engaged. Use sdr_spectrum to see what is "
         "on the air and sdr_scan_band to find signals across a range.\n\n"
-        "Transmitting is disabled unless SDR_MCP_ALLOW_TX=1 is set in this server's "
-        "environment, because the board covers the FM broadcast band where "
-        "transmitting without a licence is illegal."),
+        "TRANSMITTING IS ENABLED on this server. Before transmitting, run "
+        "sdr_check_rf_setup unless you already know how the board is cabled: it "
+        "reports what the ports appear to be attached to, and says plainly what "
+        "it cannot determine. This board reaches about +19 dBm and covers the FM "
+        "broadcast band, where transmitting without a licence is illegal, so the "
+        "operator is responsible for what leaves the antenna port. Set "
+        "SDR_MCP_ALLOW_TX=0 to turn transmitting off."),
 )
 
 _radio: Radio | None = None
@@ -575,6 +579,94 @@ def _to_dac(iq: list[complex], scale: float) -> tuple[list[int], dict]:
 
 
 @server.tool(
+    name="sdr_check_rf_setup",
+    title="What is connected to the antenna ports?",
+    description=(
+        "Work out what the RF ports are attached to, BEFORE transmitting. Run "
+        "this whenever you are about to transmit and do not already know how "
+        "the board is cabled.\n\n"
+        "READ THE LIMIT FIRST: this board has no directional coupler and no "
+        "detector on the transmit port, so whether an antenna is attached to TX "
+        "cannot be measured. Nothing can measure it. What this does instead is "
+        "gather the evidence that IS available - ambient RF on the receive port, "
+        "and whether a low-power probe finds its way back - and say plainly what "
+        "that does and does not establish.\n\n"
+        "The probe transmits briefly at maximum attenuation, about -70 dBm, "
+        "which is far below anything that could damage the board or carry "
+        "meaningfully off an antenna. Set probe=false to stay entirely passive."),
+    annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False,
+                                idempotentHint=True, openWorldHint=True),
+)
+def sdr_check_rf_setup(
+    probe: Annotated[bool, Field(
+        description="Also transmit a brief minimum-power tone to detect a "
+                    "loopback. False stays passive.")] = True,
+    channel_pair: Annotated[int, Field(ge=0, le=1)] = 0,
+    response_format: Format = "markdown",
+) -> str:
+    try:
+        r = radio()
+        rate, center = r.delivered_rate(), r.rx_lo()
+
+        # 1. Passive: is anything out there? An antenna on the receive port
+        #    almost always picks up something; a load or an open port does not.
+        iq = _capture(16384, channel_pair)
+        freqs, mags = dsp.spectrum(iq, rate, center)
+        floor = dsp.noise_floor_db(mags)
+        found = dsp.find_peaks(freqs, mags, 5, max(rate / 128.0, 1000.0))
+        strongest = max((d for _f, d in found), default=floor)
+        ambient = strongest - floor
+
+        loop_db = None
+        if probe:
+            # 2. Active: a minimum-power tone. If it comes back, TX and RX are
+            #    connected to each other.
+            loop_db = r.probe_loopback(channel_pair)
+
+        # 25 dB is well clear of both measured cases: with no cable at all the
+        # probe returns 4-7 dB (on-board TX->RX leakage), and through a 20 dB
+        # pad it returns about 70 dB. There is no ambiguous middle to worry
+        # about, so the threshold is placed for margin rather than precision.
+        if loop_db is not None and loop_db > 25:
+            verdict = "loopback"
+            says = (f"TX and RX are connected to each other. The probe came back "
+                    f"{loop_db:.0f} dB above the noise floor.")
+        elif ambient > 15:
+            verdict = "antenna on RX"
+            says = (f"The receive port is picking up ambient signals "
+                    f"{ambient:.0f} dB above its noise floor, which normally "
+                    f"means an antenna is attached to it.")
+        else:
+            verdict = "quiet"
+            says = ("The receive port is quiet and a probe did not come back. "
+                    "That is consistent with a terminated load, or with nothing "
+                    "attached." if probe else
+                    "The receive port is quiet, which is consistent with a load "
+                    "or with nothing attached.")
+
+        payload = {"verdict": verdict, "ambient_above_floor_db": round(ambient, 1),
+                   "noise_floor_dbfs": round(floor, 2),
+                   "loopback_return_db": None if loop_db is None else round(loop_db, 1),
+                   "transmit_port_sensed": False}
+        md = "\n".join([
+            f"## RF setup: {verdict}", "", says, "",
+            formatting.table([
+                ("Ambient on RX, above its floor", f"{ambient:.1f} dB"),
+                ("RX noise floor", f"{floor:.1f} dBFS"),
+                ("Probe return", "not run" if loop_db is None else f"{loop_db:.1f} dB"),
+            ]), "",
+            "**The transmit port itself was not sensed and cannot be.** There is "
+            "no coupler or detector on it. If this board has the PGA-102+ fitted "
+            "it reaches about +19 dBm, so before transmitting satisfy yourself by "
+            "other means that TX is not feeding an antenna you did not intend, "
+            "and that any loopback has at least 20 dB of attenuation in it.",
+        ])
+        return formatting.render(payload, md, response_format)
+    except Exception as exc:
+        return fail(exc)
+
+
+@server.tool(
     name="sdr_tx_status",
     title="Transmit status",
     description=(
@@ -589,7 +681,7 @@ def sdr_tx_status(response_format: Format = "markdown") -> str:
     try:
         info = radio().tx_status()
         rows = [("Transmitting allowed", "yes" if info["allowed_by_env"] else
-                 "no (set SDR_MCP_ALLOW_TX=1)"),
+                 "no (SDR_MCP_ALLOW_TX=0 in this server's environment)"),
                 ("TX LO", formatting.hz(info.get("tx_lo_hz", "?"))),
                 ("TX LO powerdown", info.get("tx_lo_powerdown", "?")),
                 ("TX sample rate", formatting.hz(info.get("tx_sample_rate_hz", "?"))),
@@ -635,7 +727,7 @@ def sdr_tx_disable(response_format: Format = "markdown") -> str:
         "Transmit a continuous single-tone carrier using the FPGA's DDS generators, at "
         "an offset from the TX local oscillator.\n\n"
         "TRANSMITS UNTIL STOPPED. Call sdr_tx_disable to stop it. Requires "
-        "SDR_MCP_ALLOW_TX=1. Only transmit into a dummy load or on frequencies you are "
+        "Only transmit into a dummy load or on frequencies you are "
         "licensed to use."),
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True,
                                 idempotentHint=True, openWorldHint=True),
@@ -651,6 +743,9 @@ def sdr_tx_tone(
         ge=-89.75, le=0.0,
         description="TX attenuation in dB; 0 is full output. Must be set, "
                     "because the firmware idles at maximum attenuation.")] = -30.0,
+    channel: Annotated[Literal["0", "1", "both"], Field(
+        description="Which transmit port: channel 0 (TX1), channel 1 (TX2), "
+                    "or both.")] = "both",
     response_format: Format = "markdown",
 ) -> str:
     if not tx_allowed():
@@ -661,12 +756,9 @@ def sdr_tx_tone(
         applied_gain = r.set_tx_gain(tx_gain_db)
         r.write(PHY, TX_LO, "powerdown", 0, output=True)
         r.write(PHY, TX_LO, "frequency", int(lo_hz), output=True)
-        channels = r.dds_channels()[:2]          # I and Q of TX channel 0
+        channels = r.dds_tone(channel, tone_offset_hz, scale)
         if not channels:
             raise ValueError("this firmware exposes no DDS channels.")
-        for ch in channels:
-            r.write(TX, ch, "frequency", int(abs(tone_offset_hz)), output=True)
-            r.write(TX, ch, "scale", scale, output=True)
         r.tx_state = {"active": True, "kind": "dds", "lo_hz": lo_hz,
                       "offset_hz": tone_offset_hz, "scale": scale,
                       "started_at": time.time()}
@@ -694,7 +786,7 @@ def sdr_tx_tone(
         "Q), or 'auto' to infer from the extension.\n\n"
         "With cyclic=true the buffer REPEATS FOREVER and transmission continues after "
         "this call returns - use sdr_tx_disable to stop. With cyclic=false the buffer "
-        "plays once. Requires SDR_MCP_ALLOW_TX=1. Only transmit into a dummy load or "
+        "plays once. Only transmit into a dummy load or "
         "on frequencies you are licensed to use."),
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True,
                                 idempotentHint=False, openWorldHint=True),
@@ -717,6 +809,9 @@ def sdr_transmit_iq(
         description="TX attenuation in dB; 0 is full output. Must be set, "
                     "because the firmware idles at maximum attenuation.")] = -30.0,
     max_samples: Annotated[int, Field(ge=256, le=4_194_304)] = 1_048_576,
+    channel: Annotated[Literal["0", "1", "both"], Field(
+        description="Which transmit port: channel 0 (TX1), channel 1 (TX2), or "
+                    "both, which sends the same waveform out of each.")] = "both",
     response_format: Format = "markdown",
 ) -> str:
     if not tx_allowed():
@@ -747,7 +842,7 @@ def sdr_transmit_iq(
             except Exception:
                 pass
 
-        written = r.transmit_samples(values, cyclic)
+        written = r.transmit_samples(values, cyclic, channel=channel)
         # Gain is set AFTER the buffer starts, and this order is load-bearing.
         # Starting a TX buffer fires the kernel's preenable hook, which unmutes
         # by restoring a CACHED attenuation - clobbering anything written
@@ -790,7 +885,7 @@ def sdr_transmit_iq(
         "tone, two tones (for intermodulation testing), a linear chirp, or "
         "band-limited noise.\n\n"
         "Always cyclic, so it repeats until sdr_tx_disable is called. Requires "
-        "SDR_MCP_ALLOW_TX=1. Only transmit into a dummy load or on frequencies you are "
+        "Only transmit into a dummy load or on frequencies you are "
         "licensed to use."),
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True,
                                 idempotentHint=False, openWorldHint=True),
@@ -807,6 +902,9 @@ def sdr_transmit_waveform(
         ge=-89.75, le=0.0,
         description="TX attenuation in dB; 0 is full output. Must be set, "
                     "because the firmware idles at maximum attenuation.")] = -30.0,
+    channel: Annotated[Literal["0", "1", "both"], Field(
+        description="Which transmit port: channel 0 (TX1), channel 1 (TX2), or "
+                    "both, which sends the same waveform out of each.")] = "both",
     response_format: Format = "markdown",
 ) -> str:
     if not tx_allowed():
@@ -842,7 +940,7 @@ def sdr_transmit_waveform(
                 r.write(TX, ch, "scale", 0, output=True)
             except Exception:
                 pass
-        written = r.transmit_samples(values, cyclic=True)
+        written = r.transmit_samples(values, cyclic=True, channel=channel)
         # After the stream starts - see the note in sdr_transmit_iq.
         applied_gain = r.set_tx_gain(tx_gain_db)
         log(f"TX WAVEFORM {shape} lo={lo_hz} bw={bandwidth_hz} scale={scale}")

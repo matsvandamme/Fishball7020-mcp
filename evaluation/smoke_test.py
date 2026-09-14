@@ -37,11 +37,15 @@ READ_ONLY_TOOLS = [
 class Server:
     """A running server plus the JSON-RPC framing to talk to it."""
 
-    def __init__(self, allow_tx: bool = False):
+    def __init__(self, allow_tx: bool | None = None):
+        """allow_tx None leaves the variable unset, which now means PERMITTED -
+        the gate is opt-out. Pass False to start a server with it closed."""
         env = dict(os.environ)
         env.pop("SDR_MCP_ALLOW_TX", None)
-        if allow_tx:
+        if allow_tx is True:
             env["SDR_MCP_ALLOW_TX"] = "1"
+        elif allow_tx is False:
+            env["SDR_MCP_ALLOW_TX"] = "0"
         # Never let the smoke test reconfigure the user's radio.
         env["SDR_MCP_NO_TX_QUIESCE"] = "1"
         self.proc = subprocess.Popen(
@@ -148,22 +152,44 @@ def main() -> int:
         check("transmit tools flagged destructive", not not_flagged,
               ", ".join(not_flagged) or "ok")
 
-        print("\n=== transmit gate (SDR_MCP_ALLOW_TX unset) ===")
-        for name, arguments in (
-                ("sdr_tx_tone", {"lo_hz": 2_400_000_000}),
-                ("sdr_transmit_iq", {"path": "/nonexistent.iq16", "lo_hz": 2_400_000_000}),
-                ("sdr_transmit_waveform", {"lo_hz": 2_400_000_000})):
-            body = text_of(s.call(name, arguments))
-            refused = "SDR_MCP_ALLOW_TX" in body
-            check(f"{name} refuses and names the variable", refused,
+        # The gate is opt-OUT: transmitting is permitted unless
+        # SDR_MCP_ALLOW_TX=0. So this check runs a SECOND server with the gate
+        # explicitly closed. It must never be run against the default server -
+        # calling a transmit tool there would transmit for real, on whatever
+        # the board happens to be connected to.
+        print("\n=== transmit gate (a second server, SDR_MCP_ALLOW_TX=0) ===")
+        closed = Server(allow_tx=False)
+        try:
+            closed.initialize()
+            for name, arguments in (
+                    ("sdr_tx_tone", {"lo_hz": 2_400_000_000}),
+                    ("sdr_transmit_iq", {"path": "/nonexistent.iq16",
+                                         "lo_hz": 2_400_000_000}),
+                    ("sdr_transmit_waveform", {"lo_hz": 2_400_000_000})):
+                body = text_of(closed.call(name, arguments))
+                refused = "SDR_MCP_ALLOW_TX" in body
+                check(f"{name} refuses when the gate is closed", refused,
+                      body.splitlines()[0][:60] if body else "empty")
+            body = text_of(closed.call("sdr_tx_status"))
+            check("sdr_tx_status still works with the gate closed",
+                  "Transmit status" in body,
                   body.splitlines()[0][:60] if body else "empty")
+            body = text_of(closed.call("sdr_tx_disable"))
+            check("sdr_tx_disable is never gated",
+                  "SDR_MCP_ALLOW_TX" not in body,
+                  body.splitlines()[0][:60] if body else "empty")
+        finally:
+            closed.stop()
 
-        # The off switch must work even with the gate closed - it is the one
-        # tool that must never be unavailable.
+        print("\n=== the default server permits transmitting ===")
         body = text_of(s.call("sdr_tx_status"))
-        check("sdr_tx_status works with gate closed",
-              "SDR_MCP_ALLOW_TX" not in body or "Transmit status" in body,
+        check("sdr_tx_status reports transmitting allowed",
+              "yes" in body.lower().split("transmitting allowed")[-1][:40]
+              if "transmitting allowed" in body.lower() else False,
               body.splitlines()[0][:60] if body else "empty")
+        # Deliberately NOT calling a transmit tool here. With the gate open it
+        # would key the radio, and a protocol test must not put RF on a port
+        # whose cabling it knows nothing about.
 
         if args.live:
             print("\n=== live hardware (read-only) ===")

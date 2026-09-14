@@ -7,6 +7,7 @@ ids depend on probe order and shift between firmware builds. Names
 
 from __future__ import annotations
 
+import math
 import os
 import threading
 import time
@@ -31,6 +32,10 @@ LO_MAX_HZ = 6_000_000_000
 # Most attenuation the AD9361 TX chain offers. The board's device tree boots it
 # at only -10 dB (adi,tx-attenuation-mdB = 10000).
 TX_ATTEN_MAX_DB = -89.75
+# How hard the setup probe transmits. About -41 dBm at the port with the PA
+# fitted: loud enough to find a cable through a 50 dB pad, quiet enough to be
+# meaningless into an antenna and 44 dB under what the receive port survives.
+PROBE_ATTEN_DB = 60.0
 
 
 def _env_uri() -> str:
@@ -47,7 +52,32 @@ def _host_from_uri(uri: str) -> tuple[str, int]:
 
 
 def tx_allowed() -> bool:
-    return os.environ.get("SDR_MCP_ALLOW_TX", "").strip() in {"1", "true", "yes", "on"}
+    """Is transmitting permitted?
+
+    Enabled by default; set SDR_MCP_ALLOW_TX=0 to turn it off. This was an
+    opt-IN gate, and is deliberately no longer one - the board's owner asked
+    for transmit available without ceremony.
+
+    What has NOT changed, because the reasons for it have not: sdr_tx_disable
+    and sdr_tx_status are never gated, every transmit call is logged, and
+    SDR_MCP_TX_BANDS still restricts frequencies if it is set. Transmitting on
+    licensed spectrum is still the operator's responsibility, and this board
+    reaches about +19 dBm.
+    """
+    raw = os.environ.get("SDR_MCP_ALLOW_TX", "").strip().lower()
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return True
+
+
+def tx_channels(which: str = "both") -> list[int]:
+    """Transmit scan-channel indices for a channel selection.
+
+    The DAC device exposes four scan channels: TX1 I, TX1 Q, TX2 I, TX2 Q. A
+    single channel is a consecutive I/Q pair; "both" is all four, which sends
+    the same waveform out of both ports.
+    """
+    return {"0": [0, 1], "1": [2, 3], "both": [0, 1, 2, 3]}[str(which)]
 
 
 def tx_bands() -> list[tuple[float, float]]:
@@ -334,6 +364,41 @@ class Radio:
             return []
         return sorted(c.id for c in dev.channels if c.id.startswith("altvoltage"))
 
+    # The DDS exposes eight generators: two per I/Q path per channel.
+    #   altvoltage0 TX1_I_F1   1 TX1_I_F2   2 TX1_Q_F1   3 TX1_Q_F2
+    #             4 TX2_I_F1   5 TX2_I_F2   6 TX2_Q_F1   7 TX2_Q_F2
+    # A single complex tone needs the F1 generator on BOTH I and Q of a
+    # channel, 90 degrees apart - which is the driver's own default phasing.
+    # Driving the two generators of the I path instead, as this once did,
+    # produces a real signal with both sidebands rather than one tone.
+    DDS_F1 = {"0": [(0, 2)], "1": [(4, 6)], "both": [(0, 2), (4, 6)]}
+    DDS_F2 = {"0": [1, 3], "1": [5, 7], "both": [1, 3, 5, 7]}
+
+    def dds_tone(self, which: str, offset_hz: float, scale: float) -> list[str]:
+        """Set up a complex tone on the selected channel(s). Returns the
+        channel ids driven."""
+        names = {c.split("_")[0]: c for c in self.dds_channels()}
+        avail = self.dds_channels()
+        driven = []
+        for i_idx, q_idx in self.DDS_F1[str(which)]:
+            for idx, phase in ((i_idx, 90000), (q_idx, 0)):
+                ch = f"altvoltage{idx}"
+                if ch not in avail:
+                    continue
+                self.write(TX, ch, "frequency", int(abs(offset_hz)), output=True)
+                self.write(TX, ch, "phase", phase, output=True)
+                self.write(TX, ch, "scale", scale, output=True)
+                driven.append(ch)
+        # Silence the second generator of every driven path, or it adds a tone.
+        for idx in self.DDS_F2[str(which)]:
+            ch = f"altvoltage{idx}"
+            if ch in avail:
+                try:
+                    self.write(TX, ch, "scale", 0, output=True)
+                except Exception:
+                    pass
+        return driven
+
     def tx_disable(self) -> dict:
         """Silence everything: DDS tones off, any buffer closed, TX LO down.
 
@@ -400,6 +465,59 @@ class Radio:
                 failed.append(f"TX {ch}: {errors.describe(exc)}")
         return {"stopped": stopped, "failed": failed} if stopped else None
 
+    def probe_loopback(self, channel_pair: int = 0, rx_pair: int | None = None) -> float:
+        """Transmit a brief minimum-power tone; return how far above the noise
+        floor it comes back, in dB.
+
+        Deliberately quiet: PROBE_ATTEN_DB of attenuation puts about -41 dBm at
+        the port even on a PA-equipped board, which is negligible into an
+        antenna and some 44 dB below what the receiver can survive. Maximum
+        attenuation was tried first and is too quiet to be useful - the return
+        through a 20 dB pad came back only 6-10 dB above the floor, which is
+        not distinguishable from leakage. Restores the transmitter afterwards
+        whatever happens.
+        """
+        from . import dsp
+        rate = self.delivered_rate()
+        offset = rate / 8.0
+        n = 4096
+        k = round(offset * n / rate)
+        values = []
+        for i in range(n):
+            ph = 2 * math.pi * k * i / n
+            values += [int(round(16384 * math.cos(ph))), int(round(16384 * math.sin(ph)))]
+        rxp = channel_pair if rx_pair is None else rx_pair
+        before = self.read(PHY, "voltage0", "hardwaregain", output=True).split()[0]
+        # Pin the receive gain. Without this the probe reads whatever gain was
+        # left behind - or an AGC adapting under it - and the result says more
+        # about the last tool that ran than about the cabling. 40 dB is inside
+        # the AD9361's transition-free window, so it means what it says.
+        rx_mode = self.read(PHY, f"voltage{rxp}", "gain_control_mode")
+        rx_gain = self.read(PHY, f"voltage{rxp}", "hardwaregain").split()[0]
+        try:
+            self.write(PHY, f"voltage{rxp}", "gain_control_mode", "manual")
+            self.write(PHY, f"voltage{rxp}", "hardwaregain", 40)
+            self.transmit_samples(values, cyclic=True, channel=str(channel_pair))
+            self.set_tx_gain(-PROBE_ATTEN_DB)
+            time.sleep(0.15)
+            iq = self.capture(16384, rxp)
+            freqs, mags = dsp.spectrum(iq, rate, self.rx_lo())
+            floor = dsp.noise_floor_db(mags)
+            target = self.rx_lo() + k * rate / n
+            best = max((m for f, m in zip(freqs, mags)
+                        if abs(f - target) < max(rate / 512.0, 2000.0)), default=floor)
+            return best - floor
+        finally:
+            try:
+                self.tx_disable()
+                self.write(PHY, "voltage0", "hardwaregain", before, output=True)
+                self.write(PHY, "voltage1", "hardwaregain", before, output=True)
+                self.write(PHY, f"voltage{rxp}", "gain_control_mode", rx_mode)
+                if rx_mode == "manual":
+                    self.write(PHY, f"voltage{rxp}", "hardwaregain", rx_gain)
+            except Exception:
+                pass
+
     def tx_status(self) -> dict:
         info: dict = {"allowed_by_env": tx_allowed(), "started_by_this_server": self.tx_state}
         bands = tx_bands()
@@ -452,7 +570,8 @@ class Radio:
                 f"{hz/1e6:.4f} MHz is outside the bands this server is allowed to "
                 f"transmit in ({pretty}). Change SDR_MCP_TX_BANDS to permit it.")
 
-    def transmit_samples(self, values: list[int], cyclic: bool) -> int:
+    def transmit_samples(self, values: list[int], cyclic: bool,
+                         channel: str = "both") -> int:
         did = self.device_id(TX)
         # A cyclic buffer left running makes the next OPEN fail with EBUSY, so
         # replace rather than refuse: transmitting again is a perfectly
@@ -460,9 +579,21 @@ class Radio:
         self._retry(lambda c: (c.close_buffer(did), None)[1])
         dev = self.devices()[TX]
         total = len(dev.scan_channels())
-        mask = mask_for([0, 1], total)
+        chans = [c for c in tx_channels(channel) if c < total]
+        if len(chans) < 2:
+            raise ValueError(
+                f"channel {channel!r} needs scan channels this device does not "
+                f"have (it has {total}).")
+        mask = mask_for(chans, total)
+        # "both" duplicates each I/Q pair, so the same waveform leaves both
+        # ports. The DMA interleaves in scan-channel order, so the sample
+        # stream has to be widened to match the mask.
+        if len(chans) == 4:
+            it = iter(values)
+            values = [v for i, q in zip(it, it) for v in (i, q, i, q)]
         written = self._retry(
-            lambda c: c.write_samples(did, values, mask, nchannels=2, cyclic=cyclic))
+            lambda c: c.write_samples(did, values, mask,
+                                      nchannels=len(chans), cyclic=cyclic))
         self.tx_state = {
             "active": True, "cyclic": cyclic,
             "samples": len(values) // 2, "started_at": time.time(),
