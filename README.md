@@ -150,11 +150,14 @@ setup, or you hold a licence for the frequency you intend to use.
   of it, and it still surprises people; `sdr_tx_status` shows what's running.
 - Every transmit call is logged to stderr with frequency, gain and sample count.
 
-> **A TX→RX loopback cable is the one setup that can damage the board — and the
-> receiver is the fragile end.** The AD9361's RX input is rated to roughly
-> **+2.5 dBm**; its transmitter reaches about **+7 dBm** at 0 dB attenuation.
-> Connect with TX attenuation at maximum, fit a 20–30 dB inline attenuator if
-> you have one, and raise power in steps.
+> **A TX→RX loopback without an attenuator will destroy your receiver.** The
+> receiver is the fragile end: the AD9361's RX input is rated to roughly
+> **+2.5 dBm**. And this board is sold in a variant carrying a Mini-Circuits
+> **PGA-102+** power amplifier — 17.7 dB of gain at 50 MHz falling to 10.4 dB
+> at 6 GHz, P1dB +17.5 dBm. Measured at 900 MHz through a 50 dB pad, such a
+> board delivers about **+18.5 dBm** flat out, some 16 dB above what its own
+> receive port survives. Fit **at least 20 dB**; 40–50 dB is comfortable.
+> Connect with TX attenuation at maximum and raise power in steps.
 
 ## Testing
 
@@ -191,12 +194,15 @@ digital amplitudes of 8191 and 32767 produced +12.7 dB and +24.8 dB relative to
 2047 (expected +12.0 and +24.1) with no rise in distortion. Scaling transmit to
 ±2047, as the receive side does, emits 24 dB low.
 
-**Set TX gain AFTER starting the stream, not before.** Starting a TX buffer
-fires the kernel's `preenable` hook, which on firmware with the TX-mute patch
-unmutes by restoring a *cached* attenuation - overwriting whatever you wrote
-beforehand. Measured: asking for -10 dB before the stream put -60 dB on the
-wire. The transmit tools here do it in the right order; if you drive the board
-yourself, do the same.
+**TX gain order no longer matters — on current firmware.** Starting a TX
+buffer fires the kernel's `preenable` hook, which on devkit firmware built
+before October 2026 unmuted by restoring a *cached* attenuation, overwriting
+whatever you wrote beforehand: asking for -10 dB put -60 dB on the wire.
+[`patches/0005`](https://github.com/matsvandamme/fishball7020-fpga-devkit/blob/main/firmware/patches/0005-dont-clobber-a-gain-set-before-streaming.patch)
+fixes that — the cache is now restored only if nothing has been set since the
+mute, so setting a gain before the stream works, and starting a stream having
+set nothing still brings back your last gain. The transmit tools here set gain
+after the stream regardless, which is correct either way.
 
 **The TX mute costs no output power.** Swept over a 50 dB attenuated loopback:
 commanded and applied attenuation matched to 0.01 dB at every point including
@@ -218,6 +224,16 @@ opens the Pluto over USB, the firmware reconfigures the composite device and
 the USB Ethernet gadget disappears — so `ip:192.168.2.1` stops answering and
 every tool here fails with a connection error until that application closes.
 Not a fault; just mutually exclusive.
+
+**Something on the board may be changing your gain.** `/mnt/jffs2` is
+persistent and `/mnt/jffs2/autorun.sh` runs at every boot, so a helper script
+there survives reflashing and appears nowhere in the firmware source. A common
+one polls the TX buffer and applies a fixed gain a second or two after any
+stream starts — a workaround for the clobbering described above, and no longer
+needed. It overrides this server's gain silently, and on a board with the
+PGA-102+ power amplifier the 10 dB such scripts typically use is about +13 dBm
+at the SMA against a +2.5 dBm receive port. The devkit's
+`tools/selftest/sdr_selftest.py --ssh` lists what is there.
 
 **The transmitter idles hot on stock firmware.** The AD9361 comes up in ENSM
 `fdd` with the synthesiser running and 10 dB of attenuation, so the TX port
