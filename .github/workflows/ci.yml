@@ -1,0 +1,66 @@
+name: CI
+
+# No radio on a hosted runner, so this checks everything that does not need
+# one: the package installs and imports on the Python versions people actually
+# have, the server speaks MCP correctly over stdio, the transmit gate refuses
+# and names the variable to set, and diagnostics stay off stdout - which is the
+# JSON-RPC channel, so a stray print breaks the protocol rather than just
+# looking untidy.
+
+on:
+  push:
+    paths:
+      - "fishball_sdr_mcp/**"
+      - "evaluation/**"
+      - "pyproject.toml"
+      - ".github/workflows/ci.yml"
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.10 is the floor declared in pyproject; 3.13 is the ceiling people
+        # are on. numpy is optional, so the matrix covers both paths.
+        python: ["3.10", "3.13"]
+        numpy: [without-numpy, with-numpy]
+    name: py${{ matrix.python }} ${{ matrix.numpy }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install
+        run: python -m pip install --quiet -e .
+
+      - name: Install numpy
+        if: matrix.numpy == 'with-numpy'
+        run: python -m pip install --quiet numpy
+
+      - name: Everything compiles
+        run: python -m compileall -q fishball_sdr_mcp evaluation
+
+      - name: The package imports without a board present
+        run: python -c "import fishball_sdr_mcp.server, fishball_sdr_mcp.radio, fishball_sdr_mcp.dsp"
+
+      - name: Protocol smoke test
+        run: python evaluation/smoke_test.py
+
+      - name: The evaluation questions are well-formed
+        run: |
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+          root = ET.parse("evaluation/questions.xml").getroot()
+          pairs = root.findall(".//qa_pair")
+          assert len(pairs) >= 10, f"expected at least 10 qa_pairs, found {len(pairs)}"
+          for i, pair in enumerate(pairs, 1):
+              for field in ("question", "answer"):
+                  el = pair.find(field)
+                  assert el is not None and (el.text or "").strip(), \
+                      f"qa_pair {i} has no non-empty <{field}>"
+          print(f"{len(pairs)} qa_pairs, each with a question and a verified answer")
+          PY
