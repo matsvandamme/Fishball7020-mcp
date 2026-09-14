@@ -10,7 +10,7 @@ metadata:
 
 # The Fishball7020 MCP server
 
-Sixteen tools over stdio that let an assistant drive a real SDR: tune it, sweep
+Seventeen tools over stdio that let an assistant drive a real SDR: tune it, sweep
 a band, measure a spectrum, capture IQ, engage the FPGA channel filter, and —
 only when deliberately enabled — transmit.
 
@@ -29,9 +29,21 @@ skill holds only what a server author keeps needing.
 breaks the protocol. All diagnostics go to stderr. The smoke test asserts this,
 because it is an easy mistake to make while debugging `iiod.py`.
 
-**`sdr_tx_disable` and `sdr_tx_status` are never gated.** Every other transmit
-tool refuses unless `SDR_MCP_ALLOW_TX=1` is set in the *server's* environment.
-An off switch that can be unavailable is not an off switch.
+**Transmitting is enabled by default.** The gate is opt-OUT: every transmit
+tool works unless `SDR_MCP_ALLOW_TX=0` is set in the *server's* environment.
+It was opt-in; the board's owner asked for it available without ceremony.
+
+**So check what is connected before transmitting.** `sdr_check_rf_setup`
+reports what the ports appear to be attached to — and states the limit plainly:
+the transmit socket has no detector, so whether an antenna is on *it* cannot be
+measured by anything. Run it whenever the cabling is not already known.
+
+**`sdr_tx_disable` and `sdr_tx_status` are never gated.** An off switch that can
+be unavailable is not an off switch.
+
+**Both transmit chains are reachable.** `sdr_tx_tone`, `sdr_transmit_iq` and
+`sdr_transmit_waveform` take `channel` = `"0"` (TX1), `"1"` (TX2) or `"both"`,
+which is the default.
 
 **This board can destroy its own receiver.** It ships in a variant with a
 Mini-Circuits PGA-102+ power amplifier and reaches about **+19 dBm**, against a

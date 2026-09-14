@@ -4,9 +4,16 @@ Ask an LLM what's on the air, and have it actually go and look.
 
 An [MCP](https://modelcontextprotocol.io) server for the **Fishball7020 /
 PlutoSky** software-defined radio (Zynq-7020 + AD9361). It turns the board into
-16 tools an assistant can use: tune it, sweep a band, measure a spectrum,
-capture IQ, engage the FPGA channel filter, and — if you deliberately switch it
-on — transmit.
+17 tools an assistant can use: tune it, sweep a band, measure a spectrum,
+capture IQ, engage the FPGA channel filter, and transmit.
+
+<sub>**New to any of that?** A *software-defined radio* is a receiver and
+transmitter whose behaviour is decided in software rather than by fixed
+circuitry — you tell it a frequency and it tunes there. *MCP* is a standard way
+of exposing a set of actions to an AI assistant, so it can operate something
+directly rather than describe how you might. *IQ* is the raw form radio samples
+take: two numbers per sample, which together carry both the strength and the
+timing of the wave. Put together: this lets an assistant use the radio.</sub>
 
 ```
 > what FM stations can I actually receive here?
@@ -71,11 +78,11 @@ pure-Python transform otherwise — the server runs with only `mcp` installed.
 
 **Look at things** — `sdr_get_status` · `sdr_spectrum` · `sdr_scan_band` ·
 `sdr_capture_iq` · `sdr_board_health` · `sdr_list_devices` ·
-`sdr_read_attribute`
+`sdr_read_attribute` · `sdr_check_rf_setup`
 
 **Change things** — `sdr_tune` · `sdr_configure_rx` · `sdr_set_fpga_filter`
 
-**Transmit** (off by default) — `sdr_tx_tone` · `sdr_transmit_iq` ·
+**Transmit** (enabled; set `SDR_MCP_ALLOW_TX=0` to forbid) — `sdr_tx_tone` · `sdr_transmit_iq` ·
 `sdr_transmit_waveform` · `sdr_tx_status` · `sdr_tx_chain_state` ·
 `sdr_tx_disable`
 
@@ -106,7 +113,7 @@ measured, not assumed — see [Notes from the hardware](#notes-from-the-hardware
 | `SDR_MCP_URI` | `ip:192.168.2.1` | Where the board is |
 | `SDR_MCP_TIMEOUT` | `10` | Socket timeout, seconds |
 | `SDR_MCP_CAPTURE_DIR` | `~/.cache/fishball-sdr` | Where `sdr_capture_iq` writes |
-| `SDR_MCP_ALLOW_TX` | unset | Set to `1` to permit transmitting |
+| `SDR_MCP_ALLOW_TX` | unset (**permitted**) | Set to `0` to forbid transmitting |
 | `SDR_MCP_TX_BANDS` | unset | Restrict TX, e.g. `2400-2483.5` (MHz) |
 | `SDR_MCP_NO_TX_QUIESCE` | unset | Leave the transmitter exactly as found |
 
@@ -114,19 +121,58 @@ measured, not assumed — see [Notes from the hardware](#notes-from-the-hardware
 
 ## Transmitting
 
-**Off unless `SDR_MCP_ALLOW_TX=1`.** This board tunes the FM broadcast band,
-where transmitting without a licence is illegal, and an assistant that can call
-a transmitter should not be able to do so by accident. Refusals name the exact
-variable to set.
+**Transmitting is enabled.** It used to be off unless you opted in; the board's
+owner asked for it available without ceremony, so the switch is now the other
+way round — set `SDR_MCP_ALLOW_TX=0` to turn it off.
 
-### Turning transmit on
+That puts the responsibility on you rather than on a flag. This board reaches
+about **+19 dBm** (roughly 80 milliwatts) and tunes the FM broadcast band, where
+transmitting without a licence is illegal in most countries. Two consequences
+worth internalising before the first call:
 
-The flag is read from the **server's** environment at startup, not from the
+- **Into an antenna**, you are a transmitter, and the law applies.
+- **Into a cable**, you can destroy the board — see the warning below.
+
+### Before you transmit: what is connected?
+
+```
+sdr_check_rf_setup
+```
+
+Run this whenever you are about to transmit and do not already know how the
+board is cabled. It reports what the ports appear to be attached to.
+
+**It is honest about a real limit.** This board has no detector on the transmit
+socket, so whether an antenna is attached *there* cannot be measured — not by
+this tool, not by anything. What it can do it does: it listens on the receive
+port for ambient radio (a sign an antenna is attached to *that*), and sends a
+deliberately tiny probe to see whether a cable carries it back. Measured, the
+two cases are unambiguous: about 4–7 dB of return with no cable, about 70 dB
+through a 20 dB attenuator.
+
+The probe transmits at −41 dBm, roughly a ten-thousandth of a milliwatt — far
+too little to matter off an antenna, and 44 dB below what the receiver can
+survive. `probe=false` keeps it entirely passive.
+
+### Choosing a channel
+
+The board has two independent transmit chains, TX1 and TX2. `sdr_tx_tone`,
+`sdr_transmit_iq` and `sdr_transmit_waveform` all take `channel`:
+
+| `channel` | Transmits from |
+|---|---|
+| `"0"` | TX1 |
+| `"1"` | TX2 |
+| `"both"` *(default)* | both ports, the same waveform on each |
+
+### Turning transmit off
+
+The variable is read from the **server's** environment at startup, not from the
 shell you type in, so exporting it in your terminal does nothing. Put it in the
 MCP registration:
 
 ```bash
-claude mcp add fishball-sdr -e SDR_MCP_ALLOW_TX=1 -- \
+claude mcp add fishball-sdr -e SDR_MCP_ALLOW_TX=0 -- \
     /absolute/path/to/Fishball7020-mcp/.venv/bin/fishball-sdr-mcp
 ```
 
@@ -135,21 +181,13 @@ or in `.mcp.json`:
 ```json
 { "mcpServers": { "fishball-sdr": {
     "command": "/absolute/path/to/Fishball7020-mcp/.venv/bin/fishball-sdr-mcp",
-    "env": { "SDR_MCP_ALLOW_TX": "1" } } } }
+    "env": { "SDR_MCP_ALLOW_TX": "0" } } } }
 ```
 
-**Restart your MCP client afterwards.** The environment is fixed when the
-server process starts, so changing the registration mid-session has no effect
-on the already-running server — the transmit tools will keep refusing until
-the client is restarted. `sdr_tx_status` reports what the running server
-actually believes:
-
-```
-| Transmitting allowed | no (set SDR_MCP_ALLOW_TX=1) |
-```
-
-Leave the flag off unless you are transmitting into a dummy load or a shielded
-setup, or you hold a licence for the frequency you intend to use.
+**Restart your MCP client afterwards** — the environment is fixed when the
+server process starts, so editing the registration mid-session changes nothing
+until the client restarts. `sdr_tx_status` reports what the running server
+actually believes.
 
 - `sdr_tx_disable` and `sdr_tx_status` are **never** gated. An off switch that
   can be unavailable is not an off switch.
@@ -157,6 +195,8 @@ setup, or you hold a licence for the frequency you intend to use.
   leave the board transmitting a cyclic buffer.
 - `cyclic=true` keeps transmitting **after the call returns**. That's the point
   of it, and it still surprises people; `sdr_tx_status` shows what's running.
+- `SDR_MCP_TX_BANDS` restricts transmission to named frequency ranges, e.g.
+  `2400-2483.5` (MHz), on top of everything above.
 - Every transmit call is logged to stderr with frequency, gain and sample count.
 
 > **A TX→RX loopback without an attenuator will destroy your receiver.** The
@@ -189,6 +229,12 @@ skill this server was built to.
 ## Notes from the hardware
 
 Things that cost real time to work out, recorded so they cost you none.
+
+<sub>Two units appear repeatedly. **dBm** is absolute power: 0 dBm is one
+milliwatt, +19 dBm about 80 mW, −41 dBm a ten-thousandth of a milliwatt. **dBFS**
+is how loud a received signal is compared with the largest the converter can
+represent, so it is always negative. Both are decibels, meaning ratios that add:
+10 dB is ten times the power, 20 dB a hundred, 30 dB a thousand.</sub>
 
 **The IIOD channel mask is fixed-width.** Exactly 8 hex characters per 32 scan
 channels. `00000003` enables channels 0 and 1. Both `3` and

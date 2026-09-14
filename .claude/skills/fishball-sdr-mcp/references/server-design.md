@@ -35,10 +35,17 @@ silently ignored or rejected with a bare errno.
 
 ## The transmit gate
 
-Every transmit tool except `sdr_tx_disable` and `sdr_tx_status` refuses unless
-`SDR_MCP_ALLOW_TX=1` is in the **server's** environment — not the shell the user
-typed in, which is a frequent confusion, so refusals name the exact variable and
-`sdr_tx_status` reports what the running server actually believes.
+The gate is **opt-out**: transmitting is permitted unless `SDR_MCP_ALLOW_TX=0`
+is in the **server's** environment — not the shell the user typed in, which is a
+frequent confusion, so refusals name the exact variable and `sdr_tx_status`
+reports what the running server actually believes. It was opt-in until the
+board's owner asked for transmit available without ceremony; the reasoning for
+everything else in this section is unchanged by that.
+
+Because the gate no longer stands between an assistant and the antenna,
+`sdr_check_rf_setup` exists to answer "what is connected?" first. It is
+deliberately explicit that it cannot sense the transmit port — no coupler, no
+detector — and reports only what it can actually establish.
 
 `sdr_tx_disable` is never gated and also runs on shutdown, so a crashed client
 cannot leave the board transmitting a cyclic buffer. `SDR_MCP_TX_BANDS` can
