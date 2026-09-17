@@ -21,6 +21,7 @@ from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from . import dsp, errors, formatting
+from . import radio as radio_module
 from .radio import PHY, TX, TX_LO, Radio, tx_allowed
 
 Format = Annotated[
@@ -384,6 +385,100 @@ def sdr_sample_gpio(
                 "transmit path is untouched.")
         return formatting.render(result, "## Sample-locked GPIO\n\n"
                                  + formatting.table(rows) + note, response_format)
+    except Exception as exc:
+        return fail(exc)
+
+
+@server.tool(
+    name="sdr_sample_gpio_clock",
+    title="Drive a clock and frame marker out of the header pins",
+    description=(
+        "Transmit a cyclic buffer authored so the sample-locked GPIO pins carry a "
+        "square wave, and optionally a frame marker on a second pin.\n\n"
+        "A clock on these pins is not a mode you select - it is a pattern in the low "
+        "nibble of the samples being transmitted. This writes that pattern for you: "
+        "pin 0 (JP5 pin 7) toggles every `divider` samples, giving sample_rate/(2x"
+        "divider); pin 1 (JP5 pin 9) pulses one sample every `frame_every` if you ask "
+        "for it.\n\n"
+        "Nothing meaningful is radiated. The nibble occupies bits the 12-bit DAC "
+        "discards, the top 12 bits are zero throughout, and TX attenuation is pinned "
+        "to maximum - the transmitter stays in the state it idles in. Stop it with "
+        "sdr_tx_disable.\n\n"
+        "The buffer length must be a whole number of cycles, or the pattern glitches "
+        "where the cyclic buffer wraps; the tool refuses rather than producing a "
+        "clock with a stutter once per buffer.\n\n"
+        "Note the frame marker is ONE SAMPLE wide - 33 ns at 30.72 MSPS - so it needs "
+        "a scope or logic analyser. Polling the pin through sysfs will never catch "
+        "it, and seeing nothing there does not mean it is absent. The clock on pin 0 "
+        "is a square wave and is visible to polling if you make it slow enough."),
+    annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False,
+                                idempotentHint=True, openWorldHint=True),
+)
+def sdr_sample_gpio_clock(
+    divider: Annotated[int, Field(
+        ge=1, le=1 << 20,
+        description="Toggle pin 0 every N samples. Clock = sample_rate/(2N).")] = 1,
+    frame_every: Annotated[int | None, Field(
+        description="Pulse pin 1 for one sample every N samples. Omit for no "
+                    "frame marker.")] = None,
+    buffer_samples: Annotated[int, Field(
+        ge=1024, le=1 << 21,
+        description="Cyclic buffer length; must be a whole number of clock "
+                    "cycles and of frames.")] = 8192,
+    response_format: Format = "markdown",
+) -> str:
+    # Not behind the transmit gate on purpose: the analog path carries zeros,
+    # so this emits nothing a gate would be protecting anyone from.
+    try:
+        r = radio().sample_gpio_pattern(divider, frame_every, buffer_samples)
+        rows = [("Sample rate", formatting.hz(r["sample_rate_hz"])),
+                ("Pin 0 (JP5 7)", f"{formatting.hz(r['clock_hz'])} square wave"),
+                ("Pin 1 (JP5 9)", formatting.hz(r["frame_hz"]) + " frame marker"
+                 if r["frame_hz"] else "not driven"),
+                ("Buffer", f"{r['buffer_samples']} samples, cyclic"),
+                ("TX attenuation", f"{r['tx_attenuation_db']} dB (maximum)")]
+        return formatting.render(
+            r, "## Sample-locked GPIO clock\n\n" + formatting.table(rows)
+            + "\n\n> Running until `sdr_tx_disable`. Ground a probe on JP5 pin 2 "
+              "or 20. Nothing meaningful is on the RF port: the pattern lives in "
+              "bits the DAC discards and the transmitter is at maximum "
+              "attenuation.", response_format)
+    except Exception as exc:
+        return fail(exc)
+
+
+@server.tool(
+    name="sdr_find_board",
+    title="Find the board when the default address does not answer",
+    description=(
+        "Look for a Fishball7020 on the usual addresses and report what to set "
+        "SDR_MCP_URI to.\n\n"
+        "The server defaults to ip:192.168.2.1, which is the USB gadget's address. A "
+        "board on Ethernet with DHCP is somewhere else entirely, and the only symptom "
+        "is a connection error with no hint about where to look. This tries the USB "
+        "address, pluto.local, and any address already in the host's ARP table, and "
+        "reports which of them actually answers IIOD."),
+    annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False,
+                                idempotentHint=True, openWorldHint=True),
+)
+def sdr_find_board(response_format: Format = "markdown") -> str:
+    try:
+        found = radio_module.find_boards()
+        if not found:
+            body = ("## No board found\n\n"
+                    "Tried the USB gadget address, `pluto.local`, and the host's ARP "
+                    "neighbours. Check that the board is powered, that its USB or "
+                    "Ethernet cable is connected, and that it has finished booting "
+                    "(about 30 seconds). If it is on a network this host cannot see, "
+                    "set `SDR_MCP_URI=ip:<address>` in the server's environment.")
+            return formatting.render({"boards": []}, body, response_format)
+        rows = [(b["uri"], f"{b.get('hw_model', 'responded to IIOD')}"
+                           f"{'  ← currently in use' if b['current'] else ''}")
+                for b in found]
+        body = ("## Boards found\n\n" + formatting.table(rows)
+                + "\n\n> Set `SDR_MCP_URI` in the server's environment to use a "
+                  "different one; it is read at startup.")
+        return formatting.render({"boards": found}, body, response_format)
     except Exception as exc:
         return fail(exc)
 

@@ -38,6 +38,11 @@ reports what the ports appear to be attached to — and states the limit plainly
 the transmit socket has no detector, so whether an antenna is on *it* cannot be
 measured by anything. Run it whenever the cabling is not already known.
 
+**`sdr_find_board` is the answer to "it cannot reach the radio".** The default
+`ip:192.168.2.1` is the USB gadget; a board on Ethernet with DHCP is elsewhere
+and the only symptom is a connection error. That tool tries the usual addresses
+and reports what to set `SDR_MCP_URI` to.
+
 **`sdr_sample_gpio` is not a transmit tool and is not gated.** It only flips a
 routing bit: the four bits the 12-bit DAC discards from each sample either
 reach four header pins or they do not. Nothing is emitted by turning it on —
@@ -45,7 +50,9 @@ the pins move only while a buffer is already streaming, and what they do is
 whatever is in the low nibble of those samples. Two things to tell a user who
 asks for a clock on those pins: the nibble has to be OR-ed in **last**, after
 any scaling, and the whole thing can be exercised with TX attenuation at
-maximum, because the nibble never reaches the analog chain.
+maximum, because the nibble never reaches the analog chain. `sdr_sample_gpio_clock`
+authors a square wave and frame marker for them; its frame marker is one sample
+wide, so it needs a scope — not seeing it through sysfs proves nothing.
 
 **`sdr_tx_disable` and `sdr_tx_status` are never gated.** An off switch that can
 be unavailable is not an off switch.

@@ -51,6 +51,62 @@ def _host_from_uri(uri: str) -> tuple[str, int]:
     return uri, DEFAULT_PORT
 
 
+def find_boards(extra: list[str] | None = None) -> list[dict]:
+    """Which addresses actually answer IIOD?
+
+    The server defaults to the USB gadget's 192.168.2.1. A board on Ethernet
+    with DHCP is somewhere else, and the only symptom is a connection error
+    that says nothing about where to look. Try the obvious places and report
+    what answered, so the fix is "set SDR_MCP_URI to this" rather than a hunt.
+    """
+    import socket
+    import subprocess
+
+    candidates: list[str] = ["192.168.2.1"]
+    current, _ = _host_from_uri(_env_uri())
+    if current not in candidates:
+        candidates.insert(0, current)
+    for name in ("pluto.local", "fishball.local"):
+        try:
+            candidates.append(socket.gethostbyname(name))
+        except OSError:
+            pass
+    try:                                  # hosts this machine has recently talked to
+        out = subprocess.run(["ip", "neigh"], capture_output=True, text=True,
+                             timeout=5).stdout
+        for line in out.splitlines():
+            parts = line.split()
+            if parts and parts[0].count(".") == 3:
+                candidates.append(parts[0])
+    except Exception:
+        pass
+    if extra:
+        candidates.extend(extra)
+
+    seen: list[str] = []
+    for host in candidates:
+        if host in seen:
+            continue
+        seen.append(host)
+
+    found = []
+    for host in seen:
+        try:
+            with Iiod(host, DEFAULT_PORT, timeout=1.5) as c:
+                xml = c.context_xml()
+            model = ""
+            root = ET.fromstring(xml)
+            for attr in root.iter("context-attribute"):
+                if attr.get("name") == "hw_model":
+                    model = attr.get("value", "")
+                    break
+            found.append({"uri": f"ip:{host}", "hw_model": model or "unknown",
+                          "current": host == current})
+        except Exception:
+            continue
+    return found
+
+
 def tx_allowed() -> bool:
     """Is transmitting permitted?
 
@@ -583,6 +639,55 @@ class Radio:
         except Exception as exc:
             info["error"] = errors.describe(exc)
         return info
+
+    def sample_gpio_pattern(self, divider: int, frame_every: int | None,
+                            nsamples: int) -> dict:
+        """Stream a cyclic buffer that makes the header pins tick.
+
+        The pins carry whatever is in the low nibble of the samples, so a clock
+        is not a mode you select - it is a pattern you author. Bit 0 toggles
+        every `divider` samples; bit 1, if asked, pulses one sample every
+        `frame_every`. The DAC never sees any of it: the top 12 bits are zero
+        throughout, so this runs with the transmitter at maximum attenuation
+        and nothing meaningful leaves the port.
+        """
+        if divider < 1:
+            raise ValueError("divider must be at least 1 sample")
+        if nsamples % (2 * divider):
+            raise ValueError(
+                f"buffer of {nsamples} samples is not a whole number of "
+                f"{2 * divider}-sample cycles, so the pattern would glitch "
+                f"where the cyclic buffer wraps. Pick a multiple.")
+        if frame_every is not None:
+            if frame_every < 1:
+                raise ValueError("frame_every must be at least 1 sample")
+            if nsamples % frame_every:
+                raise ValueError(
+                    f"buffer of {nsamples} samples is not a whole number of "
+                    f"{frame_every}-sample frames; the marker would jitter at "
+                    f"the wrap.")
+
+        values: list[int] = []
+        for n in range(nsamples):
+            nib = 1 if (n // divider) % 2 == 0 else 0
+            if frame_every is not None and n % frame_every == 0:
+                nib |= 2
+            values += [nib, 0]          # I carries the nibble, Q stays zero
+
+        self.set_tx_gain(TX_ATTEN_MAX_DB)     # the analog side sees zeros anyway
+        self.sample_gpio(True)
+        self.transmit_samples(values, cyclic=True, channel="0")
+
+        rate = self.read_int(PHY, "voltage0", "sampling_frequency", output=True)
+        return {
+            "sample_rate_hz": rate,
+            "clock_hz": rate / (2.0 * divider),
+            "frame_hz": (rate / frame_every) if frame_every else None,
+            "divider": divider,
+            "frame_every": frame_every,
+            "buffer_samples": nsamples,
+            "tx_attenuation_db": TX_ATTEN_MAX_DB,
+        }
 
     def set_tx_gain(self, db: float) -> float:
         """Set TX attenuation on both channels; returns what the chip took.

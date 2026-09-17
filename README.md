@@ -78,10 +78,10 @@ pure-Python transform otherwise — the server runs with only `mcp` installed.
 
 **Look at things** — `sdr_get_status` · `sdr_spectrum` · `sdr_scan_band` ·
 `sdr_capture_iq` · `sdr_board_health` · `sdr_list_devices` ·
-`sdr_read_attribute` · `sdr_check_rf_setup`
+`sdr_read_attribute` · `sdr_check_rf_setup` · `sdr_find_board`
 
 **Change things** — `sdr_tune` · `sdr_configure_rx` · `sdr_set_fpga_filter` ·
-`sdr_sample_gpio`
+`sdr_sample_gpio` · `sdr_sample_gpio_clock`
 
 **Transmit** (enabled; set `SDR_MCP_ALLOW_TX=0` to forbid) — `sdr_tx_tone` · `sdr_transmit_iq` ·
 `sdr_transmit_waveform` · `sdr_tx_status` · `sdr_tx_chain_state` ·
@@ -110,7 +110,10 @@ expansion-header pins instead, making digital outputs whose edges are locked to
 the RF sample that carried them — a clock, a frame marker, a sync line. The
 tool turns that routing on and off; *what* the pins do is whatever pattern you
 put in the low nibble of the samples you transmit, OR-ed in last so nothing
-rescales it away. Firmware without patches 0006/0007 has no such attribute and
+rescales it away. `sdr_sample_gpio_clock` writes such a pattern for you — a
+square wave, and optionally a one-sample frame marker — and refuses a buffer
+length that is not a whole number of cycles, because that produces a clock
+which stutters once per buffer wrap. Firmware without patches 0006/0007 has no such attribute and
 the tool says so rather than failing obscurely. See
 [the feature reference](https://github.com/matsvandamme/fishball7020-fpga-devkit/blob/main/docs/tx-gpio-bitmap.md).
 
