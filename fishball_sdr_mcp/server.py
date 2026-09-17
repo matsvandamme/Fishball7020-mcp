@@ -111,6 +111,36 @@ def capture_dir() -> pathlib.Path:
     return path
 
 
+def prune_captures(keep: int | None = None) -> int:
+    """Delete all but the newest `keep` captures. Returns how many went.
+
+    A capture is megabytes and nothing ever removed them, so a long session
+    quietly filled the user's cache directory. Keep a working set, drop the
+    rest, and let SDR_MCP_CAPTURE_KEEP=0 turn pruning off for anyone who wants
+    every file retained.
+    """
+    if keep is None:
+        try:
+            keep = int(os.environ.get("SDR_MCP_CAPTURE_KEEP", "20"))
+        except ValueError:
+            keep = 20
+    if keep <= 0:
+        return 0
+    try:
+        files = sorted((p for p in capture_dir().glob("*.iq16") if p.is_file()),
+                       key=lambda p: p.stat().st_mtime, reverse=True)
+    except OSError:
+        return 0
+    removed = 0
+    for old in files[keep:]:
+        try:
+            old.unlink()
+            removed += 1
+        except OSError:
+            pass                        # in use, or not ours to delete
+    return removed
+
+
 def fail(exc: BaseException) -> str:
     log(f"error: {exc!r}")
     return f"ERROR: {errors.describe(exc)}"
@@ -579,6 +609,9 @@ def sdr_capture_iq(
             raise ValueError("filename must be a bare name, not a path or a dotfile.")
         path = capture_dir() / name
         path.write_bytes(struct.pack(f"<{len(raw)}h", *raw))
+        pruned = prune_captures()
+        if pruned:
+            log(f"pruned {pruned} older capture(s) from {capture_dir()}")
         stats = dsp.iq_statistics(iq)
         payload = {"path": str(path), "format": "interleaved int16 (I,Q)",
                    "sample_rate_hz": r.delivered_rate(), "center_hz": r.rx_lo(), **stats}

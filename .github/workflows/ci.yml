@@ -2,10 +2,14 @@ name: CI
 
 # No radio on a hosted runner, so this checks everything that does not need
 # one: the package installs and imports on the Python versions people actually
-# have, the server speaks MCP correctly over stdio, the transmit gate refuses
-# and names the variable to set, and diagnostics stay off stdout - which is the
-# JSON-RPC channel, so a stray print breaks the protocol rather than just
-# looking untidy.
+# have, the arithmetic and parsing underneath the tools are right
+# (evaluation/test_units.py), the server speaks MCP correctly over stdio, the
+# transmit gate refuses and names the variable to set, and diagnostics stay off
+# stdout - which is the JSON-RPC channel, so a stray print breaks the protocol
+# rather than just looking untidy.
+#
+# Hardware checks live in the devkit repo's hardware.yml, on a self-hosted
+# runner with a board attached.
 
 on:
   push:
@@ -46,6 +50,9 @@ jobs:
 
       - name: The package imports without a board present
         run: python -c "import fishball_sdr_mcp.server, fishball_sdr_mcp.radio, fishball_sdr_mcp.dsp"
+
+      - name: Unit tests (no radio needed)
+        run: python evaluation/test_units.py
 
       - name: Protocol smoke test
         run: python evaluation/smoke_test.py
