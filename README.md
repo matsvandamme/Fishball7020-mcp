@@ -35,6 +35,7 @@ The board's firmware and FPGA build system live in a companion repository,
 ## Quick start
 
 ```bash
+# run from: wherever you want the server to live (e.g. ~)
 git clone https://github.com/matsvandamme/Fishball7020-mcp.git
 cd Fishball7020-mcp
 python3 -m venv .venv
@@ -188,6 +189,7 @@ shell you type in, so exporting it in your terminal does nothing. Put it in the
 MCP registration:
 
 ```bash
+# run from: anywhere - the path below is absolute
 claude mcp add fishball-sdr -e SDR_MCP_ALLOW_TX=0 -- \
     /absolute/path/to/Fishball7020-mcp/.venv/bin/fishball-sdr-mcp
 ```
@@ -227,6 +229,7 @@ actually believes.
 ## Testing
 
 ```bash
+# run from: the repo root
 .venv/bin/python evaluation/smoke_test.py          # protocol only, no radio
 .venv/bin/python evaluation/smoke_test.py --live   # also call read-only tools
 ```
