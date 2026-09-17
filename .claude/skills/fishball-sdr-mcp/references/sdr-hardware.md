@@ -25,6 +25,14 @@ Received samples are 12-bit sign-extended into `int16`, so **full scale is
 emits 24 dB low. Measured over a cable: digital amplitudes of 8191 and 32767
 produced +12.7 dB and +24.8 dB relative to 2047, with no rise in distortion.
 
+**The DAC is nevertheless 12 bits.** It takes the top 12 of your 16-bit word
+(`dma_data[15:4]`) and discards the bottom four, which is why the full range
+matters. Those four discarded bits are what `sdr_sample_gpio` puts on header
+pins: they cost no analog performance because nothing downstream ever read
+them. A consequence worth knowing — two transmit samples differing only in
+their low nibble produce the *identical* DAC code, so a pattern authored there
+is invisible in the RF.
+
 ## Gain in dB is not proportional to gain
 
 `hardwaregain` is an **index with a dB-shaped name**. The AD9361 maps one index

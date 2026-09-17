@@ -210,8 +210,42 @@ class Radio:
         did = self.device_id(device)
         self._retry(lambda c: c.write_channel(did, channel, attr, value, output))
 
+    def write_dev(self, device: str, attr: str, value) -> None:
+        did = self.device_id(device)
+        self._retry(lambda c: c.write_device(did, attr, value))
+
     def read_int(self, device: str, channel: str, attr: str, output: bool = False) -> int:
         return int(float(self.read(device, channel, attr, output)))
+
+    # -- sample-locked GPIO -------------------------------------------------
+
+    def sample_gpio(self, enable: bool | None = None) -> dict:
+        """Read or set the sample-locked GPIO outputs.
+
+        The four bits the 12-bit DAC discards from every transmit sample are
+        routed to header pins JP5 7/9/11/13, so their edges are locked to the
+        RF sample that carried them. The enable is a device attribute added by
+        the devkit's patch 0007; firmware without it has no such attribute,
+        which is worth saying plainly rather than reporting a bare IIO error.
+        """
+        try:
+            if enable is not None:
+                self.write_dev(TX, "tx_sample_gpio_en", 1 if enable else 0)
+            state = self.read_dev(TX, "tx_sample_gpio_en").strip()
+        except Exception as exc:
+            raise ValueError(
+                "This firmware has no tx_sample_gpio_en attribute, so it predates "
+                "the sample-locked GPIO feature (devkit patches 0006/0007). Rebuild "
+                "and reflash from the devkit to get it."
+            ) from exc
+        return {
+            "enabled": state not in ("0", ""),
+            "pins": {f"sample_gpio[{i}]": {"header_net": f"3V3_IO{i + 1}",
+                                           "jp5_pin": 7 + 2 * i,
+                                           "fpga_ball": b,
+                                           "linux_gpio": 978 + i}
+                     for i, b in enumerate(("V10", "U9", "U10", "T9"))},
+        }
 
     # -- status -------------------------------------------------------------
 
@@ -541,6 +575,11 @@ class Radio:
                 except Exception:
                     continue
             info["dds"] = dds
+            try:
+                info["sample_gpio_enabled"] = (
+                    self.read_dev(TX, "tx_sample_gpio_en").strip() not in ("0", ""))
+            except Exception:
+                pass          # firmware without the feature simply omits the row
         except Exception as exc:
             info["error"] = errors.describe(exc)
         return info

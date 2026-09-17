@@ -341,6 +341,53 @@ def sdr_set_fpga_filter(
         return fail(exc)
 
 
+@server.tool(
+    name="sdr_sample_gpio",
+    title="Sample-locked GPIO outputs on the expansion header",
+    description=(
+        "Read or set the four header pins that carry the low nibble of every transmit "
+        "sample, so their edges are locked to the RF sample that carried them.\n\n"
+        "The AD9361's transmit DAC is 12 bits and reads only the top 12 of each 16-bit "
+        "sample; the bottom four reach the FPGA and are discarded. This feature routes "
+        "them to JP5 pins 7/9/11/13 instead, at no analog cost - useful as a master "
+        "clock, frame marker or sync line for hardware that must stay aligned with the "
+        "transmitted waveform.\n\n"
+        "Enabling it changes nothing on its own: the pins only move while a TX buffer "
+        "is streaming, and what they do is whatever pattern is in the low nibble of "
+        "the samples being sent. The nibble must be OR-ed in LAST, after any scaling, "
+        "or the scaling overwrites it. With the feature off the same pins are ordinary "
+        "Linux GPIO (978-981).\n\n"
+        "Needs firmware built from the devkit with patches 0006/0007; older builds have "
+        "no such attribute and the tool says so."),
+    annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False,
+                                idempotentHint=True, openWorldHint=True),
+)
+def sdr_sample_gpio(
+    enable: Annotated[bool | None, Field(
+        description="True to route sample bits to the pins, False for plain GPIO, "
+                    "omit to just read the current state")] = None,
+    response_format: Format = "markdown",
+) -> str:
+    try:
+        result = radio().sample_gpio(enable)
+        rows = [("State", "**routing sample bits**" if result["enabled"]
+                 else "ordinary GPIO (feature off)")]
+        for name, p in result["pins"].items():
+            rows.append((name, f"{p['header_net']} · JP5 pin {p['jp5_pin']} · "
+                               f"ball {p['fpga_ball']} · gpio {p['linux_gpio']}"))
+        note = ("\n\n> The pins carry the low nibble of channel 0's I samples, one "
+                "nibble per sample, and only while a buffer is streaming. Maximum "
+                "toggle rate is half the sample rate. Ground a probe on JP5 pin 2 "
+                "or 20."
+                if result["enabled"] else
+                "\n\n> With this off the four pins are plain Linux GPIO and the "
+                "transmit path is untouched.")
+        return formatting.render(result, "## Sample-locked GPIO\n\n"
+                                 + formatting.table(rows) + note, response_format)
+    except Exception as exc:
+        return fail(exc)
+
+
 # ---------------------------------------------------------------------------
 # Measurement
 # ---------------------------------------------------------------------------
