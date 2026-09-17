@@ -195,15 +195,35 @@ class TestSpectrum(unittest.TestCase):
 
     @unittest.skipUnless(dsp.HAVE_NUMPY, "numpy not installed")
     def test_numpy_and_pure_python_paths_agree(self):
+        """The two transforms must agree wherever a real signal could be.
+
+        Only down to a floor, deliberately. Bins in the numerical dust - this
+        tone's skirts reach -210 dBFS - differ between the two FFTs by float64
+        rounding amplified by the log, and comparing those is testing the
+        arithmetic of the C library rather than anything about this server. A
+        real capture's noise floor is around -95 dBFS, so -150 is already far
+        below anything that is ever reported.
+        """
         samples = self._tone(64, self.FULL_SCALE)
         f_np, m_np = dsp.spectrum(samples, self.RATE, self.CENTER)
         with mock.patch.object(dsp, "HAVE_NUMPY", False):
             f_py, m_py = dsp.spectrum(samples, self.RATE, self.CENTER)
+
         self.assertEqual(len(f_np), len(f_py))
         for a, b in zip(f_np, f_py):
             self.assertAlmostEqual(a, b, delta=1e-3)
+
+        compared = 0
         for a, b in zip(m_np, m_py):
+            if max(a, b) < -150.0:
+                continue
             self.assertAlmostEqual(a, b, delta=1e-6)
+            compared += 1
+        self.assertGreater(compared, 0, "no bins were above the comparison floor")
+
+        # And the thing that actually matters: same peak, same place.
+        self.assertAlmostEqual(max(m_np), max(m_py), delta=1e-9)
+        self.assertEqual(f_np[m_np.index(max(m_np))], f_py[m_py.index(max(m_py))])
 
 
 class TestNoiseFloor(unittest.TestCase):
