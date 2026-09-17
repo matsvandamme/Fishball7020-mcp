@@ -8,6 +8,7 @@ this board.
 from __future__ import annotations
 
 import errno
+import socket
 
 from .iiod import IiodError
 
@@ -59,8 +60,14 @@ def describe(exc: BaseException) -> str:
         advice = _ERRNO_ADVICE.get(exc.code, "the device rejected the request.")
         return f"Radio rejected '{exc.command}' ({name}): {advice}"
 
-    if isinstance(exc, (ConnectionRefusedError, TimeoutError, OSError)) and not isinstance(
-            exc, IiodError):
+    # Only NETWORK failures are "cannot reach the radio". A missing capture
+    # directory or an unreadable IQ file is also an OSError, and telling the
+    # caller to check the USB cable for those sends them the wrong way.
+    if isinstance(exc, (FileNotFoundError, IsADirectoryError, NotADirectoryError,
+                        PermissionError)):
+        return f"File problem: {exc}"
+    if isinstance(exc, (ConnectionError, TimeoutError, socket.timeout, socket.gaierror,
+                        OSError)) and not isinstance(exc, IiodError):
         return (
             f"Cannot reach the radio at {_URI_HINT}. Check the board is powered and "
             f"enumerated, that the USB Ethernet interface is up, and that "

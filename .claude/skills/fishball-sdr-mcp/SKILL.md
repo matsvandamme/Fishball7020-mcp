@@ -10,7 +10,7 @@ metadata:
 
 # The Fishball7020 MCP server
 
-Seventeen tools over stdio that let an assistant drive a real SDR: tune it, sweep
+Twenty tools over stdio that let an assistant drive a real SDR: tune it, sweep
 a band, measure a spectrum, capture IQ, engage the FPGA channel filter, and —
 only when deliberately enabled — transmit.
 
@@ -40,22 +40,56 @@ measured by anything. Run it whenever the cabling is not already known.
 
 **`sdr_find_board` is the answer to "it cannot reach the radio".** The default
 `ip:192.168.2.1` is the USB gadget; a board on Ethernet with DHCP is elsewhere
-and the only symptom is a connection error. That tool tries the usual addresses
-and reports what to set `SDR_MCP_URI` to.
+and the only symptom is a connection error. It tries the default, `pluto.local`,
+`fishball.local` and up to 16 ARP neighbours concurrently with an 8 s deadline,
+and reports `hw_model` plus what to set `SDR_MCP_URI` to. A file error (missing
+IQ file, unwritable capture dir) is reported as a file problem, not as
+"cannot reach the radio" - `errors.describe` tells them apart.
 
 **`sdr_sample_gpio` is not a transmit tool and is not gated.** It only flips a
 routing bit: the four bits the 12-bit DAC discards from each sample either
-reach four header pins or they do not. Nothing is emitted by turning it on —
-the pins move only while a buffer is already streaming, and what they do is
-whatever is in the low nibble of those samples. Two things to tell a user who
-asks for a clock on those pins: the nibble has to be OR-ed in **last**, after
-any scaling, and the whole thing can be exercised with TX attenuation at
-maximum, because the nibble never reaches the analog chain. `sdr_sample_gpio_clock`
+reach four header pins (JP5 7/9/11/13, GPIO 978–981) or they do not. Nothing
+is emitted by turning it on — the pins move only while a buffer is streaming,
+and what they do is whatever is in the low nibble of those samples, OR-ed in
+**last** after any scaling. `sdr_sample_gpio_clock` authors such a pattern (and
+*is* gated, see above); its frame marker is one sample wide, so it needs a
+scope — not seeing it through sysfs proves nothing. The pins lead the RF by a
+constant offset of roughly a microsecond; do not describe them as simultaneous. `sdr_sample_gpio_clock`
 authors a square wave and frame marker for them; its frame marker is one sample
 wide, so it needs a scope — not seeing it through sysfs proves nothing.
 
 **`sdr_tx_disable` and `sdr_tx_status` are never gated.** An off switch that can
 be unavailable is not an off switch.
+
+**Everything that opens a TX buffer or keys a tone IS gated - including the two
+that are easy to think of as harmless.** `sdr_check_rf_setup`'s probe streams
+at 60 dB attenuation (≈ −41 dBm) on the *receive* LO and runs the band check;
+with the gate closed it stays passive and says so. `sdr_sample_gpio_clock`
+sends zeros to the DAC but starting a buffer brings the LO up on devkit
+firmware, so it refuses when the gate is closed. If you add a tool that streams
+a buffer, gate it, and make the smoke test's closed-server section call it.
+
+**Set TX attenuation AFTER a buffer starts, and read it back.** On devkit
+firmware, starting a buffer runs the kernel's unmute, which restores a CACHED
+attenuation - whatever the previous stream ended with. A value written before
+the stream is overwritten. Every streaming path here writes the gain after
+`transmit_samples()` returns and verifies it; the one exception is a one-shot
+(`cyclic=false`) buffer, which has already finished by then, so it sets the
+gain first (patch 0005 keeps it) and calls `tx_disable()` after it plays out.
+
+**Tool calls are serialised.** The SDK runs each `tools/call` in its own worker
+thread, so without a lock a client batching `sdr_spectrum` and `sdr_tx_tone`
+would interleave multi-step radio sequences. `_serialized` in `server.py`
+wraps every tool body in one re-entrant lock; keep it on anything you add.
+
+**The startup quiesce runs only when the gate is CLOSED.** With the default
+(transmit permitted) the server leaves the transmitter exactly as it found it.
+`sdr_tx_chain_state` reports whether it is live.
+
+**On shutdown the server silences the radio if *it* ever touched TX** - a clean
+EOF or SIGTERM (handled) both reach that code. It cannot know about a buffer
+some other process started, and a SIGKILL skips it; say so rather than promise
+more.
 
 **Both transmit chains are reachable.** `sdr_tx_tone`, `sdr_transmit_iq` and
 `sdr_transmit_waveform` take `channel` = `"0"` (TX1), `"1"` (TX2) or `"both"`,

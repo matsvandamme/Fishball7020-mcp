@@ -4,7 +4,7 @@ Ask an LLM what's on the air, and have it actually go and look.
 
 An [MCP](https://modelcontextprotocol.io) server for the **Fishball7020 /
 PlutoSky** software-defined radio (Zynq-7020 + AD9361). It turns the board into
-17 tools an assistant can use: tune it, sweep a band, measure a spectrum,
+20 tools an assistant can use: tune it, sweep a band, measure a spectrum,
 capture IQ, engage the FPGA channel filter, and transmit.
 
 <sub>**New to any of that?** A *software-defined radio* is a receiver and
@@ -78,14 +78,15 @@ pure-Python transform otherwise — the server runs with only `mcp` installed.
 
 **Look at things** — `sdr_get_status` · `sdr_spectrum` · `sdr_scan_band` ·
 `sdr_capture_iq` · `sdr_board_health` · `sdr_list_devices` ·
-`sdr_read_attribute` · `sdr_check_rf_setup` · `sdr_find_board`
+`sdr_read_attribute` · `sdr_find_board`
 
 **Change things** — `sdr_tune` · `sdr_configure_rx` · `sdr_set_fpga_filter` ·
 `sdr_sample_gpio` · `sdr_sample_gpio_clock`
 
 **Transmit** (enabled; set `SDR_MCP_ALLOW_TX=0` to forbid) — `sdr_tx_tone` · `sdr_transmit_iq` ·
-`sdr_transmit_waveform` · `sdr_tx_status` · `sdr_tx_chain_state` ·
-`sdr_tx_disable`
+`sdr_transmit_waveform` · `sdr_sample_gpio_clock` · `sdr_check_rf_setup` (its
+loopback probe transmits at −41 dBm on the receive LO; passive when the gate is
+closed) · `sdr_tx_status` · `sdr_tx_chain_state` · `sdr_tx_disable`
 
 Every tool takes `response_format`: `markdown` to read, `json` to parse.
 
@@ -212,7 +213,7 @@ actually believes.
   of it, and it still surprises people; `sdr_tx_status` shows what's running.
 - `SDR_MCP_TX_BANDS` restricts transmission to named frequency ranges, e.g.
   `2400-2483.5` (MHz), on top of everything above.
-- Every transmit call is logged to stderr with frequency, gain and sample count.
+- Every transmit call - tones, buffers, the RF-setup probe and the GPIO clock - is logged to stderr with frequency, gain, channel and sample count.
 
 > **A TX→RX loopback without an attenuator will destroy your receiver.** The
 > receiver is the fragile end: the AD9361's RX input is rated to roughly

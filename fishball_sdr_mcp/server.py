@@ -7,11 +7,14 @@ print to it. All diagnostics go to stderr via `log`.
 from __future__ import annotations
 
 import array
+import functools
 import math
 import os
 import pathlib
+import signal
 import struct
 import sys
+import threading
 import time
 import wave
 from typing import Annotated, Literal
@@ -22,7 +25,7 @@ from pydantic import Field
 
 from . import dsp, errors, formatting
 from . import radio as radio_module
-from .radio import PHY, TX, TX_LO, Radio, tx_allowed
+from .radio import PHY, PROBE_ATTEN_DB, TX, TX_LO, Radio, tx_allowed
 
 Format = Annotated[
     Literal["markdown", "json"],
@@ -37,20 +40,52 @@ server = MCPServer(
         "Start with sdr_get_status to see how the radio is configured, including "
         "whether the FPGA channel filter is engaged. Use sdr_spectrum to see what is "
         "on the air and sdr_scan_band to find signals across a range.\n\n"
-        "TRANSMITTING IS ENABLED on this server. Before transmitting, run "
-        "sdr_check_rf_setup unless you already know how the board is cabled: it "
-        "reports what the ports appear to be attached to, and says plainly what "
-        "it cannot determine. This board reaches about +19 dBm and covers the FM "
-        "broadcast band, where transmitting without a licence is illegal, so the "
-        "operator is responsible for what leaves the antenna port. Set "
-        "SDR_MCP_ALLOW_TX=0 to turn transmitting off."),
+        + ("TRANSMITTING IS ENABLED on this server. Before transmitting, run "
+           "sdr_check_rf_setup unless you already know how the board is cabled: it "
+           "reports what the ports appear to be attached to, and says plainly what "
+           "it cannot determine. This board reaches about +19 dBm and covers the FM "
+           "broadcast band, where transmitting without a licence is illegal, so the "
+           "operator is responsible for what leaves the antenna port. Set "
+           "SDR_MCP_ALLOW_TX=0 to turn transmitting off."
+           if tx_allowed() else
+           "TRANSMITTING IS DISABLED on this server (SDR_MCP_ALLOW_TX=0): every tool "
+           "that would open a TX buffer or key a tone refuses, sdr_check_rf_setup "
+           "stays passive, and the transmitter was attenuated to maximum at startup. "
+           "sdr_tx_disable and sdr_tx_status always work.")),
 )
 
 _radio: Radio | None = None
 
+# The MCP SDK dispatches each tools/call as its own task and runs these sync
+# functions in worker threads, so two tool calls CAN interleave - and most of
+# them are multi-step sequences on one shared radio (set gain, then LO, then
+# DDS; transmit, capture, then tx_disable). One lock around every tool body
+# makes each call atomic with respect to the others. Reentrant, because tools
+# call radio() which may call quiesce, and because a tool may call another.
+_OP = threading.RLock()
+
+
+def _serialized(fn):
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        with _OP:
+            return fn(*args, **kwargs)
+    return wrapper
+
+
 
 def log(message: str) -> None:
     print(f"[fishball_sdr_mcp] {message}", file=sys.stderr, flush=True)
+
+
+def _describe_tx_state(st: dict) -> str:
+    if not st.get("active"):
+        return "no"
+    age = time.time() - st.get("started_at", time.time())
+    if st.get("kind") == "dds":
+        return f"yes - DDS tone, {age:.0f} s ago"
+    return (f"yes - {st.get('samples', '?')} samples, "
+            f"{'cyclic' if st.get('cyclic') else 'one shot'}, {age:.0f} s ago")
 
 
 def radio() -> Radio:
@@ -95,6 +130,7 @@ def fail(exc: BaseException) -> str:
     annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False,
                                 idempotentHint=True, openWorldHint=True),
 )
+@_serialized
 def sdr_get_status(response_format: Format = "markdown") -> str:
     try:
         s = radio().status()
@@ -116,6 +152,7 @@ def sdr_get_status(response_format: Format = "markdown") -> str:
     annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False,
                                 idempotentHint=True, openWorldHint=True),
 )
+@_serialized
 def sdr_tx_chain_state(response_format: Format = "markdown") -> str:
     try:
         r = radio()
@@ -163,6 +200,7 @@ def sdr_tx_chain_state(response_format: Format = "markdown") -> str:
     annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False,
                                 idempotentHint=True, openWorldHint=True),
 )
+@_serialized
 def sdr_list_devices(response_format: Format = "markdown") -> str:
     try:
         r = radio()
@@ -192,6 +230,7 @@ def sdr_list_devices(response_format: Format = "markdown") -> str:
     annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False,
                                 idempotentHint=True, openWorldHint=True),
 )
+@_serialized
 def sdr_read_attribute(
     device: Annotated[str, Field(description="Device name, e.g. 'ad9361-phy'")],
     attribute: Annotated[str, Field(description="Attribute name, e.g. 'rf_bandwidth'")],
@@ -222,6 +261,7 @@ def sdr_read_attribute(
     annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False,
                                 idempotentHint=True, openWorldHint=True),
 )
+@_serialized
 def sdr_board_health(response_format: Format = "markdown") -> str:
     try:
         rails = radio().board_health()
@@ -250,6 +290,7 @@ def sdr_board_health(response_format: Format = "markdown") -> str:
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False,
                                 idempotentHint=True, openWorldHint=True),
 )
+@_serialized
 def sdr_tune(
     frequency_hz: Annotated[int, Field(ge=70_000_000, le=6_000_000_000,
                                        description="RX LO frequency in Hz")],
@@ -273,12 +314,14 @@ def sdr_tune(
     description=(
         "Set any of: converter sample rate (Hz), RF analog bandwidth (Hz), gain "
         "control mode, and manual gain (dB). Omitted settings are left alone. Values "
-        "are checked against the radio's own '*_available' attributes, so an illegal "
+        "gain_mode is checked against the radio's own '*_available' list; the other "
+        "values go straight to the device, which rejects an illegal "
         "request is rejected with the legal options rather than silently ignored.\n\n"
         "Manual gain only applies when gain_mode is 'manual'."),
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False,
                                 idempotentHint=True, openWorldHint=True),
 )
+@_serialized
 def sdr_configure_rx(
     sample_rate_hz: Annotated[int | None, Field(
         default=None, ge=520_000, le=61_440_000,
@@ -321,6 +364,7 @@ def sdr_configure_rx(
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False,
                                 idempotentHint=True, openWorldHint=True),
 )
+@_serialized
 def sdr_set_fpga_filter(
     engaged: Annotated[bool, Field(description="True to engage (÷8), False to bypass")],
     response_format: Format = "markdown",
@@ -363,6 +407,7 @@ def sdr_set_fpga_filter(
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False,
                                 idempotentHint=True, openWorldHint=True),
 )
+@_serialized
 def sdr_sample_gpio(
     enable: Annotated[bool | None, Field(
         description="True to route sample bits to the pins, False for plain GPIO, "
@@ -400,10 +445,11 @@ def sdr_sample_gpio(
         "pin 0 (JP5 pin 7) toggles every `divider` samples, giving sample_rate/(2x"
         "divider); pin 1 (JP5 pin 9) pulses one sample every `frame_every` if you ask "
         "for it.\n\n"
-        "Nothing meaningful is radiated. The nibble occupies bits the 12-bit DAC "
+        "Nothing meaningful is radiated: the nibble occupies bits the 12-bit DAC "
         "discards, the top 12 bits are zero throughout, and TX attenuation is pinned "
-        "to maximum - the transmitter stays in the state it idles in. Stop it with "
-        "sdr_tx_disable.\n\n"
+        "to maximum and read back. What does leave the port is LO leakage at "
+        "-89.75 dB, the same as the board idles with - which is why this still "
+        "honours SDR_MCP_ALLOW_TX. Stop it with sdr_tx_disable.\n\n"
         "The buffer length must be a whole number of cycles, or the pattern glitches "
         "where the cyclic buffer wraps; the tool refuses rather than producing a "
         "clock with a stutter once per buffer.\n\n"
@@ -414,6 +460,7 @@ def sdr_sample_gpio(
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False,
                                 idempotentHint=True, openWorldHint=True),
 )
+@_serialized
 def sdr_sample_gpio_clock(
     divider: Annotated[int, Field(
         ge=1, le=1 << 20,
@@ -422,13 +469,16 @@ def sdr_sample_gpio_clock(
         description="Pulse pin 1 for one sample every N samples. Omit for no "
                     "frame marker.")] = None,
     buffer_samples: Annotated[int, Field(
-        ge=1024, le=1 << 21,
+        ge=1024, le=1 << 20,
         description="Cyclic buffer length; must be a whole number of clock "
                     "cycles and of frames.")] = 8192,
     response_format: Format = "markdown",
 ) -> str:
-    # Not behind the transmit gate on purpose: the analog path carries zeros,
-    # so this emits nothing a gate would be protecting anyone from.
+    # Behind the gate. The DAC data is zero, but opening a TX buffer brings the
+    # LO up on this firmware, and LO leakage at maximum attenuation is still
+    # "transmitting" to an operator who said SDR_MCP_ALLOW_TX=0.
+    if not tx_allowed():
+        return "ERROR: " + errors.tx_gate_message("drive the sample-locked GPIO clock")
     try:
         r = radio().sample_gpio_pattern(divider, frame_every, buffer_samples)
         rows = [("Sample rate", formatting.hz(r["sample_rate_hz"])),
@@ -461,6 +511,7 @@ def sdr_sample_gpio_clock(
     annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False,
                                 idempotentHint=True, openWorldHint=True),
 )
+@_serialized
 def sdr_find_board(response_format: Format = "markdown") -> str:
     try:
         found = radio_module.find_boards()
@@ -491,7 +542,11 @@ def _capture(nsamples: int, channel_pair: int, settle: bool = True):
     r = radio()
     if settle:
         r.capture(min(4096, nsamples), channel_pair)   # discard: let the AGC settle
-    return dsp.interleaved_to_complex(r.capture(nsamples, channel_pair))
+    raw = r.capture(nsamples, channel_pair)
+    if not raw:
+        raise ValueError("capture returned no samples - is the receive DMA running? "
+                         "sdr_get_status shows the delivered rate.")
+    return dsp.interleaved_to_complex(raw)
 
 
 @server.tool(
@@ -506,6 +561,7 @@ def _capture(nsamples: int, channel_pair: int, settle: bool = True):
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False,
                                 idempotentHint=False, openWorldHint=True),
 )
+@_serialized
 def sdr_capture_iq(
     samples: Annotated[int, Field(ge=256, le=4_194_304,
                                   description="Samples per channel")] = 65536,
@@ -519,8 +575,8 @@ def sdr_capture_iq(
         raw = r.capture(samples, channel_pair)
         iq = dsp.interleaved_to_complex(raw)
         name = filename or f"capture_{int(time.time())}_{samples}.iq16"
-        if pathlib.Path(name).name != name:
-            raise ValueError("filename must be a bare name, not a path.")
+        if pathlib.Path(name).name != name or name.startswith(".") or not name.strip():
+            raise ValueError("filename must be a bare name, not a path or a dotfile.")
         path = capture_dir() / name
         path.write_bytes(struct.pack(f"<{len(raw)}h", *raw))
         stats = dsp.iq_statistics(iq)
@@ -549,6 +605,7 @@ def sdr_capture_iq(
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False,
                                 idempotentHint=False, openWorldHint=True),
 )
+@_serialized
 def sdr_spectrum(
     samples: Annotated[int, Field(ge=1024, le=262_144,
                                   description="Samples for the transform")] = 16384,
@@ -591,6 +648,7 @@ def sdr_spectrum(
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False,
                                 idempotentHint=False, openWorldHint=True),
 )
+@_serialized
 def sdr_scan_band(
     start_hz: Annotated[int, Field(ge=70_000_000, le=6_000_000_000)],
     stop_hz: Annotated[int, Field(ge=70_000_000, le=6_000_000_000)],
@@ -610,7 +668,7 @@ def sdr_scan_band(
         step = step_hz or int(rate * 0.8)
         if step <= 0:
             raise ValueError("Could not determine a step size; set step_hz explicitly.")
-        steps = int((stop_hz - start_hz) // step) + 1
+        steps = -(-(stop_hz - start_hz) // step)          # ceil: cover the top too
         if steps > 200:
             raise ValueError(
                 f"That range needs {steps} steps of {formatting.hz(step)}. Raise "
@@ -618,14 +676,22 @@ def sdr_scan_band(
 
         hits: list[tuple[float, float, float]] = []
         for i in range(steps):
-            center = start_hz + i * step
-            if center > stop_hz:
+            # Centre each capture window on its slice of the band. Tuning to
+            # the slice's START wasted half of every window below the band and
+            # never looked at the top of it - an 88-108 MHz scan tuned to 88
+            # and covered 76-100, missing anything above 100 MHz.
+            center = int(start_hz + step / 2 + i * step)
+            if center - rate / 2 >= stop_hz:
                 break
             r.tune(center)
             iq = _capture(samples, 0, settle=(i == 0))
             freqs, mags = dsp.spectrum(iq, rate, center)
             floor = dsp.noise_floor_db(mags)
             for f, d in dsp.find_peaks(freqs, mags, 5, max(rate / 32.0, 50e3)):
+                # The bin at the LO carries the receiver's own DC offset and
+                # LO leakage at every step, and is not a signal.
+                if abs(f - center) < max(rate / 64.0, 50e3):
+                    continue
                 if d - floor >= threshold_db and start_hz <= f <= stop_hz:
                     hits.append((f, d, d - floor))
 
@@ -733,12 +799,15 @@ def _to_dac(iq: list[complex], scale: float) -> tuple[list[int], dict]:
         "gather the evidence that IS available - ambient RF on the receive port, "
         "and whether a low-power probe finds its way back - and say plainly what "
         "that does and does not establish.\n\n"
-        "The probe transmits briefly at maximum attenuation, about -70 dBm, "
-        "which is far below anything that could damage the board or carry "
-        "meaningfully off an antenna. Set probe=false to stay entirely passive."),
+        f"The probe transmits briefly at {PROBE_ATTEN_DB:.0f} dB attenuation - about "
+        "-41 dBm at the port on a PA board, 44 dB under what the receive port "
+        "survives and negligible off an antenna - on the RECEIVE LO frequency, so "
+        "the band restriction applies. Set probe=false to stay entirely passive; "
+        "with SDR_MCP_ALLOW_TX=0 it stays passive regardless."),
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False,
                                 idempotentHint=True, openWorldHint=True),
 )
+@_serialized
 def sdr_check_rf_setup(
     probe: Annotated[bool, Field(
         description="Also transmit a brief minimum-power tone to detect a "
@@ -760,10 +829,17 @@ def sdr_check_rf_setup(
         ambient = strongest - floor
 
         loop_db = None
+        probe_note = ""
+        if probe and not tx_allowed():
+            probe = False
+            probe_note = ("\n\n> Probe skipped: transmitting is disabled on this server "
+                          "(SDR_MCP_ALLOW_TX=0), so only the passive evidence is above.")
+            log("rf setup probe skipped - transmit gate closed")
         if probe:
-            # 2. Active: a minimum-power tone. If it comes back, TX and RX are
-            #    connected to each other.
+            # 2. Active: a minimum-power tone on the receive LO. If it comes
+            #    back, TX and RX are connected to each other.
             loop_db = r.probe_loopback(channel_pair)
+            log(f"rf setup probe: return {loop_db:.1f} dB above floor")
 
         # 25 dB is well clear of both measured cases: with no cable at all the
         # probe returns 4-7 dB (on-board TX->RX leakage), and through a 20 dB
@@ -801,7 +877,7 @@ def sdr_check_rf_setup(
             "no coupler or detector on it. If this board has the PGA-102+ fitted "
             "it reaches about +19 dBm, so before transmitting satisfy yourself by "
             "other means that TX is not feeding an antenna you did not intend, "
-            "and that any loopback has at least 20 dB of attenuation in it.",
+            "and that any loopback has at least 20 dB of attenuation in it." + probe_note,
         ])
         return formatting.render(payload, md, response_format)
     except Exception as exc:
@@ -819,6 +895,7 @@ def sdr_check_rf_setup(
     annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False,
                                 idempotentHint=True, openWorldHint=True),
 )
+@_serialized
 def sdr_tx_status(response_format: Format = "markdown") -> str:
     try:
         info = radio().tx_status()
@@ -827,7 +904,7 @@ def sdr_tx_status(response_format: Format = "markdown") -> str:
                 ("TX LO", formatting.hz(info.get("tx_lo_hz", "?"))),
                 ("TX LO powerdown", info.get("tx_lo_powerdown", "?")),
                 ("TX sample rate", formatting.hz(info.get("tx_sample_rate_hz", "?"))),
-                ("Buffer started here", info["started_by_this_server"])]
+                ("Buffer started here", _describe_tx_state(info["started_by_this_server"]))]
         md = "## Transmit status\n\n" + formatting.table(rows)
         if info.get("dds"):
             md += "\n\n### DDS tones\n\n| Channel | Frequency | Scale |\n|---|---|---|\n"
@@ -849,6 +926,7 @@ def sdr_tx_status(response_format: Format = "markdown") -> str:
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False,
                                 idempotentHint=True, openWorldHint=True),
 )
+@_serialized
 def sdr_tx_disable(response_format: Format = "markdown") -> str:
     try:
         result = radio().tx_disable()
@@ -868,12 +946,13 @@ def sdr_tx_disable(response_format: Format = "markdown") -> str:
     description=(
         "Transmit a continuous single-tone carrier using the FPGA's DDS generators, at "
         "an offset from the TX local oscillator.\n\n"
-        "TRANSMITS UNTIL STOPPED. Call sdr_tx_disable to stop it. Requires "
+        "TRANSMITS UNTIL STOPPED. Call sdr_tx_disable to stop it. "
         "Only transmit into a dummy load or on frequencies you are "
         "licensed to use."),
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True,
                                 idempotentHint=True, openWorldHint=True),
 )
+@_serialized
 def sdr_tx_tone(
     lo_hz: Annotated[int, Field(ge=70_000_000, le=6_000_000_000,
                                 description="TX local oscillator in Hz")],
@@ -895,7 +974,8 @@ def sdr_tx_tone(
     try:
         r = radio()
         r.check_tx_frequency(lo_hz + tone_offset_hz)
-        applied_gain = r.set_tx_gain(tx_gain_db)
+        r.stop_buffer()                 # a running IQ buffer would otherwise keep playing
+        applied_gain = r.set_tx_gain(tx_gain_db, channel=channel)
         r.write(PHY, TX_LO, "powerdown", 0, output=True)
         r.write(PHY, TX_LO, "frequency", int(lo_hz), output=True)
         channels = r.dds_tone(channel, tone_offset_hz, scale)
@@ -904,7 +984,8 @@ def sdr_tx_tone(
         r.tx_state = {"active": True, "kind": "dds", "lo_hz": lo_hz,
                       "offset_hz": tone_offset_hz, "scale": scale,
                       "started_at": time.time()}
-        log(f"TX TONE lo={lo_hz} offset={tone_offset_hz} scale={scale}")
+        log(f"TX TONE lo={lo_hz} offset={tone_offset_hz} scale={scale} "
+            f"gain={applied_gain} channel={channel}")
         payload = {"lo_hz": lo_hz, "tone_offset_hz": tone_offset_hz, "scale": scale,
                    "emitted_at_hz": lo_hz + tone_offset_hz, "channels": channels,
                    "tx_gain_db": applied_gain}
@@ -933,6 +1014,7 @@ def sdr_tx_tone(
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True,
                                 idempotentHint=False, openWorldHint=True),
 )
+@_serialized
 def sdr_transmit_iq(
     path: Annotated[str, Field(description="Path to the IQ file")],
     lo_hz: Annotated[int, Field(ge=70_000_000, le=6_000_000_000,
@@ -950,7 +1032,7 @@ def sdr_transmit_iq(
         ge=-89.75, le=0.0,
         description="TX attenuation in dB; 0 is full output. Must be set, "
                     "because the firmware idles at maximum attenuation.")] = -30.0,
-    max_samples: Annotated[int, Field(ge=256, le=4_194_304)] = 1_048_576,
+    max_samples: Annotated[int, Field(ge=256, le=1_048_576)] = 1_048_576,
     channel: Annotated[Literal["0", "1", "both"], Field(
         description="Which transmit port: channel 0 (TX1), channel 1 (TX2), or "
                     "both, which sends the same waveform out of each.")] = "both",
@@ -984,17 +1066,28 @@ def sdr_transmit_iq(
             except Exception:
                 pass
 
-        written = r.transmit_samples(values, cyclic, channel=channel)
-        # Gain is set AFTER the buffer starts, and this order is load-bearing.
-        # Starting a TX buffer fires the kernel's preenable hook, which unmutes
-        # by restoring a CACHED attenuation - clobbering anything written
-        # beforehand. Measured: asking for -10 dB before the stream produced
-        # -60 dB on the wire. Writing it afterwards lands last and wins.
-        applied_gain = r.set_tx_gain(tx_gain_db)
+        if cyclic:
+            written = r.transmit_samples(values, cyclic, channel=channel)
+            # Gain is set AFTER the buffer starts, and this order is
+            # load-bearing. Starting a TX buffer fires the kernel's preenable
+            # hook, which unmutes by restoring a CACHED attenuation -
+            # clobbering anything written beforehand. Measured: asking for
+            # -10 dB before the stream produced -60 dB on the wire. Writing it
+            # afterwards lands last and wins.
+            applied_gain = r.set_tx_gain(tx_gain_db, channel=channel)
+        else:
+            # A one-shot buffer has finished by the time transmit_samples
+            # returns, so "afterwards" would raise the gain with nothing
+            # playing and leave the carrier unmuted. Set it first - devkit
+            # firmware (patch 0005) keeps a gain set before streaming - play
+            # it out, then put the transmitter back to sleep.
+            applied_gain = r.set_tx_gain(tx_gain_db, channel=channel)
+            written = r.transmit_samples(values, cyclic, channel=channel)
+            r.tx_disable()
         rate = r.read_int(PHY, "voltage0", "sampling_frequency", output=True)
         duration = len(iq) / rate if rate else 0.0
         log(f"TX IQ file={src.name} lo={lo_hz} samples={len(iq)} cyclic={cyclic} "
-            f"scale={scale}")
+            f"scale={scale} gain={applied_gain} channel={channel}")
 
         payload = {"file": str(src), "lo_hz": lo_hz, "samples": len(iq),
                    "bytes_written": written, "cyclic": cyclic,
@@ -1026,12 +1119,13 @@ def sdr_transmit_iq(
         "Synthesise and transmit a test signal without needing an IQ file: a single "
         "tone, two tones (for intermodulation testing), a linear chirp, or "
         "band-limited noise.\n\n"
-        "Always cyclic, so it repeats until sdr_tx_disable is called. Requires "
+        "Always cyclic, so it repeats until sdr_tx_disable is called. "
         "Only transmit into a dummy load or on frequencies you are "
         "licensed to use."),
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True,
                                 idempotentHint=False, openWorldHint=True),
 )
+@_serialized
 def sdr_transmit_waveform(
     lo_hz: Annotated[int, Field(ge=70_000_000, le=6_000_000_000)],
     shape: Annotated[Literal["tone", "two_tone", "chirp", "noise"],
@@ -1058,11 +1152,19 @@ def sdr_transmit_waveform(
         rate = r.read_int(PHY, "voltage0", "sampling_frequency", output=True)
         n = samples
         iq: list[complex] = []
+        # A cyclic buffer must hold a whole number of cycles, or the phase
+        # jumps at every wrap and the "tone" is a comb of splatter. Quantise
+        # the frequency to the nearest integer cycle count and report it.
+        actual_bw = bandwidth_hz
         if shape == "tone":
-            w = 2 * math.pi * bandwidth_hz / rate
+            cycles = max(1, round(bandwidth_hz * n / rate))
+            actual_bw = cycles * rate / n
+            w = 2 * math.pi * cycles / n
             iq = [complex(math.cos(w * i), math.sin(w * i)) for i in range(n)]
         elif shape == "two_tone":
-            w1 = 2 * math.pi * (bandwidth_hz / 2) / rate
+            cycles = max(1, round((bandwidth_hz / 2) * n / rate))
+            actual_bw = 2 * cycles * rate / n
+            w1 = 2 * math.pi * cycles / n
             w2 = -w1
             iq = [0.5 * (complex(math.cos(w1 * i), math.sin(w1 * i))
                          + complex(math.cos(w2 * i), math.sin(w2 * i))) for i in range(n)]
@@ -1084,13 +1186,17 @@ def sdr_transmit_waveform(
                 pass
         written = r.transmit_samples(values, cyclic=True, channel=channel)
         # After the stream starts - see the note in sdr_transmit_iq.
-        applied_gain = r.set_tx_gain(tx_gain_db)
-        log(f"TX WAVEFORM {shape} lo={lo_hz} bw={bandwidth_hz} scale={scale}")
-        payload = {"shape": shape, "lo_hz": lo_hz, "bandwidth_hz": bandwidth_hz,
+        applied_gain = r.set_tx_gain(tx_gain_db, channel=channel)
+        log(f"TX WAVEFORM {shape} lo={lo_hz} bw={actual_bw} samples={n} scale={scale} "
+            f"gain={applied_gain} channel={channel}")
+        payload = {"shape": shape, "lo_hz": lo_hz, "bandwidth_hz": actual_bw,
+                   "requested_bandwidth_hz": bandwidth_hz,
                    "samples": n, "sample_rate_hz": rate, "bytes_written": written,
                    "cyclic": True, **scaling}
         rows = [("Shape", shape), ("Centre", formatting.hz(lo_hz)),
-                ("Width / offset", formatting.hz(bandwidth_hz)),
+                ("Width / offset", formatting.hz(actual_bw)
+                 + ("" if actual_bw == bandwidth_hz else
+                    f" (nearest whole number of cycles to {formatting.hz(bandwidth_hz)})")),
                 ("Samples", n), ("Sample rate", formatting.hz(rate)),
                 ("Peak amplitude", f"{scale} of full scale"),
                 ("TX gain", f"{applied_gain} dB")]
@@ -1102,15 +1208,27 @@ def sdr_transmit_waveform(
         return fail(exc)
 
 
+def _sigterm(*_):
+    raise SystemExit(0)
+
+
 def main() -> None:
     log("starting (stdio)")
+    # Hosts commonly stop a server with SIGTERM, whose Python default is to die
+    # without running finally blocks. Turn it into SystemExit so the cleanup
+    # below - the only thing standing between a closed client and a cyclic
+    # buffer that keeps transmitting - actually runs.
+    signal.signal(signal.SIGTERM, _sigterm)
     try:
         server.run("stdio")
     finally:
         # A cyclic buffer would otherwise keep transmitting after the client
-        # goes away, so always try to silence the radio on the way out.
-        if _radio is not None and _radio.tx_state.get("active"):
-            log("shutting down with TX active - silencing")
+        # goes away, so silence the radio on the way out whenever this server
+        # changed the transmit chain at all - not only when it thinks a
+        # buffer is still active, because that flag has been wrong before.
+        if _radio is not None and (_radio.tx_state.get("active")
+                                   or getattr(_radio, "touched_tx", False)):
+            log("shutting down after touching TX - silencing")
             try:
                 _radio.tx_disable()
             except Exception as exc:

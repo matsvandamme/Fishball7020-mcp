@@ -91,3 +91,17 @@ this server set. If levels do not match what was asked for, look there first.
 `hw_serial`, and tools that identify Plutos by serial — SDRangel among them —
 refuse the board. This server connects by URI and is unaffected, but
 `sdr_get_status` reports the serial so the problem is visible.
+
+
+## The RF-setup probe, and why it once lied
+
+`sdr_check_rf_setup` transmits a short tone and looks for it on the receiver.
+It listens at the RECEIVE LO, so the transmitter must be put there too and
+switched on. An earlier version did neither: it went out on whatever TX LO the
+last tool left (2.4 GHz after boot) while the receiver listened at 88 MHz
+after a band scan, and its own cleanup powered the LO down for every probe
+after the first. Both produced a confident "quiet - consistent with a load or
+nothing attached" with a cable fitted. The probe now programs and restores the
+TX LO and powerdown state, checks the band list, and reads its attenuation
+back before capturing. Return values: 4–7 dB with no cable (on-board leakage),
+~70 dB through a 20 dB pad; the verdict threshold is 25 dB.

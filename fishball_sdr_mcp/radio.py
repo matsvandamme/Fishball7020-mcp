@@ -15,7 +15,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 
 from . import errors
-from .iiod import DEFAULT_PORT, Iiod, mask_for
+from .iiod import DEFAULT_PORT, Iiod, IiodError, mask_for
 
 PHY = "ad9361-phy"
 RX = "cf-ad9361-lpc"              # the ADC capture device
@@ -85,25 +85,43 @@ def find_boards(extra: list[str] | None = None) -> list[dict]:
 
     seen: list[str] = []
     for host in candidates:
-        if host in seen:
-            continue
-        seen.append(host)
+        if host not in seen:
+            seen.append(host)
+    # Bounded: a LAN with dozens of stale ARP neighbours must not turn this
+    # into a minutes-long crawl. The default and mDNS names come first, so the
+    # cap only ever drops distant strangers.
+    seen = seen[:16]
+    try:
+        current_ip = socket.gethostbyname(current)
+    except OSError:
+        current_ip = current
 
-    found = []
-    for host in seen:
+    def probe(host: str) -> dict | None:
         try:
             with Iiod(host, DEFAULT_PORT, timeout=1.5) as c:
                 xml = c.context_xml()
             model = ""
-            root = ET.fromstring(xml)
-            for attr in root.iter("context-attribute"):
+            for attr in ET.fromstring(xml).iter("context-attribute"):
                 if attr.get("name") == "hw_model":
                     model = attr.get("value", "")
                     break
-            found.append({"uri": f"ip:{host}", "hw_model": model or "unknown",
-                          "current": host == current})
+            return {"uri": f"ip:{host}", "hw_model": model or "unknown",
+                    "current": host in (current, current_ip)}
         except Exception:
-            continue
+            return None
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    found = []
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = {pool.submit(probe, h): h for h in seen}
+        try:
+            for fut in as_completed(futures, timeout=8.0):
+                r = fut.result()
+                if r:
+                    found.append(r)
+        except Exception:
+            pass                        # deadline hit: report what answered
+    found.sort(key=lambda b: (not b["current"], b["uri"]))
     return found
 
 
@@ -288,7 +306,9 @@ class Radio:
             if enable is not None:
                 self.write_dev(TX, "tx_sample_gpio_en", 1 if enable else 0)
             state = self.read_dev(TX, "tx_sample_gpio_en").strip()
-        except Exception as exc:
+        except IiodError as exc:
+            # ENOENT/EINVAL from IIOD is "no such attribute". A dropped
+            # connection is an OSError and must NOT be reported as old firmware.
             raise ValueError(
                 "This firmware has no tx_sample_gpio_en attribute, so it predates "
                 "the sample-locked GPIO feature (devkit patches 0006/0007). Rebuild "
@@ -467,7 +487,11 @@ class Radio:
     def dds_tone(self, which: str, offset_hz: float, scale: float) -> list[str]:
         """Set up a complex tone on the selected channel(s). Returns the
         channel ids driven."""
-        names = {c.split("_")[0]: c for c in self.dds_channels()}
+        if offset_hz < 0:
+            raise ValueError(
+                "negative tone offsets are not supported by the DDS phasing used "
+                "here; choose an LO below the wanted frequency instead.")
+        self.touched_tx = True
         avail = self.dds_channels()
         driven = []
         for i_idx, q_idx in self.DDS_F1[str(which)]:
@@ -577,7 +601,19 @@ class Radio:
             ph = 2 * math.pi * k * i / n
             values += [int(round(16384 * math.cos(ph))), int(round(16384 * math.sin(ph)))]
         rxp = channel_pair if rx_pair is None else rx_pair
-        before = self.read(PHY, "voltage0", "hardwaregain", output=True).split()[0]
+        before = [self.read(PHY, ch, "hardwaregain", output=True).split()[0]
+                  for ch in ("voltage0", "voltage1")]
+        # The probe listens on the RECEIVE LO, so the transmitter has to be put
+        # there too - and switched on. Neither happened in an earlier version:
+        # the probe went out on whatever TX LO the last tool left (2.4 GHz after
+        # boot) while the receiver listened at, say, 88 MHz after a band scan,
+        # and tx_disable() in the cleanup had powered the LO down for every
+        # probe after the first. Both produced a confident "quiet" verdict with
+        # a cable fitted, on the one check meant to protect the receiver.
+        rx_lo = self.rx_lo()
+        self.check_tx_frequency(rx_lo)
+        tx_lo_before = self.read(PHY, TX_LO, "frequency", output=True).strip()
+        tx_pd_before = self.read(PHY, TX_LO, "powerdown", output=True).strip()
         # Pin the receive gain. Without this the probe reads whatever gain was
         # left behind - or an AGC adapting under it - and the result says more
         # about the last tool that ran than about the cabling. 40 dB is inside
@@ -587,26 +623,47 @@ class Radio:
         try:
             self.write(PHY, f"voltage{rxp}", "gain_control_mode", "manual")
             self.write(PHY, f"voltage{rxp}", "hardwaregain", 40)
+            self.write(PHY, TX_LO, "powerdown", 0, output=True)
+            self.write(PHY, TX_LO, "frequency", int(rx_lo), output=True)
             self.transmit_samples(values, cyclic=True, channel=str(channel_pair))
-            self.set_tx_gain(-PROBE_ATTEN_DB)
+            # AFTER the stream starts: on this firmware starting a buffer
+            # restores a cached attenuation, so a gain written before it can be
+            # overwritten. Read it back rather than trust it.
+            self.set_tx_gain(-PROBE_ATTEN_DB, channel=str(channel_pair))
+            applied = self.read(PHY, f"voltage{channel_pair}", "hardwaregain",
+                                output=True).split()[0]
+            if abs(float(applied) + PROBE_ATTEN_DB) > 0.5:
+                raise RuntimeError(
+                    f"probe attenuation did not take: asked -{PROBE_ATTEN_DB} dB, "
+                    f"chip reports {applied} dB - refusing to probe louder than "
+                    f"intended.")
             time.sleep(0.15)
             iq = self.capture(16384, rxp)
-            freqs, mags = dsp.spectrum(iq, rate, self.rx_lo())
+            freqs, mags = dsp.spectrum(iq, rate, rx_lo)
             floor = dsp.noise_floor_db(mags)
-            target = self.rx_lo() + k * rate / n
+            target = rx_lo + k * rate / n
             best = max((m for f, m in zip(freqs, mags)
                         if abs(f - target) < max(rate / 512.0, 2000.0)), default=floor)
             return best - floor
         finally:
             try:
                 self.tx_disable()
-                self.write(PHY, "voltage0", "hardwaregain", before, output=True)
-                self.write(PHY, "voltage1", "hardwaregain", before, output=True)
+                for ch, val in zip(("voltage0", "voltage1"), before):
+                    self.write(PHY, ch, "hardwaregain", val, output=True)
+                self.write(PHY, TX_LO, "frequency", tx_lo_before, output=True)
+                self.write(PHY, TX_LO, "powerdown", tx_pd_before, output=True)
                 self.write(PHY, f"voltage{rxp}", "gain_control_mode", rx_mode)
                 if rx_mode == "manual":
                     self.write(PHY, f"voltage{rxp}", "hardwaregain", rx_gain)
             except Exception:
                 pass
+
+    def stop_buffer(self) -> None:
+        """Close any running sample buffer and mark it inactive."""
+        did = self.device_id(TX)
+        self._retry(lambda c: (c.close_buffer(did), None)[1])
+        if self.tx_state.get("kind") != "dds":
+            self.tx_state = {"active": False}
 
     def tx_status(self) -> dict:
         info: dict = {"allowed_by_env": tx_allowed(), "started_by_this_server": self.tx_state}
@@ -674,9 +731,21 @@ class Radio:
                 nib |= 2
             values += [nib, 0]          # I carries the nibble, Q stays zero
 
-        self.set_tx_gain(TX_ATTEN_MAX_DB)     # the analog side sees zeros anyway
+        self.set_tx_gain(TX_ATTEN_MAX_DB, channel="0")
         self.sample_gpio(True)
         self.transmit_samples(values, cyclic=True, channel="0")
+        # Again, AFTER the stream starts: on devkit firmware starting a buffer
+        # restores a cached attenuation, which can be anything a previous tool
+        # left. The DAC data is zero, but the LO is up while a buffer runs, and
+        # LO leakage scales with attenuation - so pin it and read it back.
+        self.set_tx_gain(TX_ATTEN_MAX_DB, channel="0")
+        applied = self.read(PHY, "voltage0", "hardwaregain", output=True).split()[0]
+        if abs(float(applied) - TX_ATTEN_MAX_DB) > 0.5:
+            self.tx_disable()
+            raise RuntimeError(
+                f"could not hold TX0 at maximum attenuation (chip reports "
+                f"{applied} dB) - stopped rather than run the pattern louder than "
+                f"intended.")
 
         rate = self.read_int(PHY, "voltage0", "sampling_frequency", output=True)
         return {
@@ -689,8 +758,11 @@ class Radio:
             "tx_attenuation_db": TX_ATTEN_MAX_DB,
         }
 
-    def set_tx_gain(self, db: float) -> float:
-        """Set TX attenuation on both channels; returns what the chip took.
+    def set_tx_gain(self, db: float, channel: str = "both") -> float:
+        """Set TX attenuation on the selected channel(s); returns what the chip took.
+
+        Only the ports asked for: raising TX2's gain because the caller wanted
+        TX1 puts full LO leakage out of a port the caller was told is idle.
 
         Necessary, not optional. With the TX-mute firmware the chip sits at
         maximum attenuation until something asks to transmit, so a transmit
@@ -700,7 +772,10 @@ class Radio:
             raise ValueError(
                 f"TX gain must be between {TX_ATTEN_MAX_DB} and 0 dB (0 = full "
                 f"output). Got {db}.")
-        for ch in ("voltage0", "voltage1"):
+        self.touched_tx = True
+        ports = {"0": ("voltage0",), "1": ("voltage1",)}.get(str(channel),
+                                                             ("voltage0", "voltage1"))
+        for ch in ports:
             self.write(PHY, ch, "hardwaregain", db, output=True)
         return float(self.read(PHY, "voltage0", "hardwaregain", output=True).split()[0])
 
@@ -735,6 +810,7 @@ class Radio:
         if len(chans) == 4:
             it = iter(values)
             values = [v for i, q in zip(it, it) for v in (i, q, i, q)]
+        self.touched_tx = True
         written = self._retry(
             lambda c: c.write_samples(did, values, mask,
                                       nchannels=len(chans), cyclic=cyclic))
@@ -743,6 +819,15 @@ class Radio:
             "samples": len(values) // 2, "started_at": time.time(),
         }
         if not cyclic:
+            # A one-shot buffer is torn down by CLOSE. Closing straight after
+            # WRITEBUF truncated the waveform - it had barely started - so wait
+            # for it to play out first. Bounded, so a huge buffer at a low rate
+            # cannot hold the tool for minutes.
+            try:
+                rate = self.read_int(PHY, "voltage0", "sampling_frequency", output=True)
+                time.sleep(min(len(values) / max(len(chans), 2) / rate + 0.05, 10.0))
+            except Exception:
+                time.sleep(0.5)
             self._retry(lambda c: (c.close_buffer(did), None)[1])
             self.tx_state["active"] = False
         return written

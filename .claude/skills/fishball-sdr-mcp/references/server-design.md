@@ -72,7 +72,7 @@ this URI, check the USB Ethernet interface is up.
 | `SDR_MCP_URI` | `ip:192.168.2.1` | where the board is |
 | `SDR_MCP_TIMEOUT` | `10` | socket timeout, seconds |
 | `SDR_MCP_CAPTURE_DIR` | `~/.cache/fishball-sdr` | where `sdr_capture_iq` writes |
-| `SDR_MCP_ALLOW_TX` | unset | `1` permits transmitting |
+| `SDR_MCP_ALLOW_TX` | unset (permitted) | set to `0` to forbid every tool that opens a TX buffer or keys a tone |
 | `SDR_MCP_TX_BANDS` | unset | restrict TX, e.g. `2400-2483.5` (MHz) |
 | `SDR_MCP_NO_TX_QUIESCE` | unset | leave the transmitter exactly as found |
 
@@ -94,3 +94,15 @@ the weather — and turn instead on the device tree, advertised capabilities and
 arithmetic over reported rates, which are properties of the firmware.
 
 CI runs the protocol test on Python 3.10 and 3.13, with and without numpy.
+
+
+## The smoke test's two-server design
+
+`evaluation/smoke_test.py` starts the default server (transmit permitted) and a
+SECOND one with `SDR_MCP_ALLOW_TX=0`. Every refusal check runs against the
+closed one - `sdr_tx_tone`, `sdr_transmit_iq`, `sdr_transmit_waveform`,
+`sdr_sample_gpio_clock`, and `sdr_check_rf_setup` staying passive - and the
+closed server's `instructions` must say transmitting is disabled. It never
+calls a transmit tool on the default server: it once did, and keyed the radio
+on a cable whose far end nobody had checked. It asserts the exact tool count
+(20), so adding or removing one means updating the test on purpose.

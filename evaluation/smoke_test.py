@@ -130,7 +130,7 @@ def main() -> int:
         listed = s.list_tools()
         tools = listed.get("result", {}).get("tools", [])
         names = sorted(t["name"] for t in tools)
-        check("tools/list", len(tools) >= 15, f"{len(tools)} tools")
+        check("tools/list", len(tools) == 20, f"{len(tools)} tools (expected 20)")
 
         # Every tool needs a description and an input schema, or an agent cannot
         # use it correctly.
@@ -160,7 +160,10 @@ def main() -> int:
         print("\n=== transmit gate (a second server, SDR_MCP_ALLOW_TX=0) ===")
         closed = Server(allow_tx=False)
         try:
-            closed.initialize()
+            closed_init = closed.initialize()
+            instr = closed_init.get("result", {}).get("instructions", "") or ""
+            check("closed server's instructions say transmitting is disabled",
+                  "DISABLED" in instr, instr[:60])
             for name, arguments in (
                     ("sdr_tx_tone", {"lo_hz": 2_400_000_000}),
                     ("sdr_transmit_iq", {"path": "/nonexistent.iq16",
@@ -170,6 +173,17 @@ def main() -> int:
                 refused = "SDR_MCP_ALLOW_TX" in body
                 check(f"{name} refuses when the gate is closed", refused,
                       body.splitlines()[0][:60] if body else "empty")
+            # The two paths that stream a buffer WITHOUT being ordinary
+            # transmit tools. Both once bypassed the gate; neither may now.
+            body = text_of(closed.call("sdr_sample_gpio_clock", {}))
+            check("sdr_sample_gpio_clock refuses when the gate is closed",
+                  "SDR_MCP_ALLOW_TX" in body,
+                  body.splitlines()[0][:60] if body else "empty")
+            body = text_of(closed.call("sdr_check_rf_setup", {"probe": True}))
+            check("sdr_check_rf_setup stays passive when the gate is closed",
+                  "Probe skipped" in body or "Cannot reach" in body,
+                  ("probe skipped" if "Probe skipped" in body
+                   else body.splitlines()[0][:60]) if body else "empty")
             body = text_of(closed.call("sdr_tx_status"))
             check("sdr_tx_status still works with the gate closed",
                   "Transmit status" in body,
