@@ -221,9 +221,13 @@ actually believes.
 > receiver is the fragile end: the AD9361's RX input is rated to roughly
 > **+2.5 dBm**. And this board is sold in a variant carrying a Mini-Circuits
 > **PGA-102+** power amplifier — 17.7 dB of gain at 50 MHz falling to 10.4 dB
-> at 6 GHz, P1dB +17.5 dBm. Measured at 900 MHz through a 50 dB pad, such a
-> board delivers about **+18.5 dBm** flat out, some 16 dB above what its own
-> receive port survives. Fit **at least 20 dB**; 40–50 dB is comfortable.
+> at 6 GHz, P1dB +17.5 dBm. Plan for about **+19 dBm** flat out, some 16 dB
+> above what its own receive port survives. That is an estimate, scaled up from
+> a quieter measurement and capped at the amplifier's compression point, not a
+> power-meter reading. Fit **at least 20 dB**. More is just as safe, but 20 dB
+> also measures best: the board leaks some transmit signal straight into its
+> own receiver, and through 50 dB that leak is as strong as the loop above about
+> 1.5 GHz ([measured](https://github.com/matsvandamme/fishball7020-fpga-devkit/blob/main/docs/measured-performance.md#the-boards-own-tx-to-rx-leak)).
 > Connect with TX attenuation at maximum and raise power in steps.
 
 ## Testing
@@ -291,7 +295,7 @@ greps for. SDRangel then lists `PlutoSDR0 TBD` and fails with `open serial TBD
 failed`. Current devkit firmware mints a persistent serial on first boot without
 changing the gadget MAC or interface name; `sdr_get_status` reports it. If you
 see a `TBD`, reflash from the current
-[devkit](https://github.com/matsvandamme/fishball7020-fpga-devkit#troubleshooting).
+[devkit](https://github.com/matsvandamme/fishball7020-fpga-devkit/blob/main/docs/troubleshooting.md).
 
 **Two tools cannot hold the board at once.** When SDRangel (or anything else)
 opens the Pluto over USB, the firmware reconfigures the composite device and
@@ -313,7 +317,7 @@ at the SMA against a +2.5 dBm receive port. The devkit's
 `fdd` with the synthesiser running and 10 dB of attenuation, so the TX port
 leaks LO with nothing in the DAC. This server quiets it at startup unless
 transmitting is enabled; the companion devkit
-[fixes it properly in firmware](https://github.com/matsvandamme/fishball7020-fpga-devkit#transmitter-safety).
+[fixes it properly in firmware](https://github.com/matsvandamme/fishball7020-fpga-devkit/blob/main/docs/transmitter-safety.md).
 
 ## License
 

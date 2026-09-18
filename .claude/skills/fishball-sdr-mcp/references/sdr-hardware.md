@@ -8,11 +8,16 @@ server author keeps needing, with the figures measured on real hardware.
 
 The AD9361's RX input is rated to about **+2.5 dBm**. This board ships in a
 variant carrying a Mini-Circuits **PGA-102+** — 17.7 dB of gain at 50 MHz
-falling to 10.4 dB at 6 GHz, P1dB +17.5 dBm — and measures **+19 dBm** flat out,
-consistent to 0.7 dB across six runs.
+falling to 10.4 dB at 6 GHz, P1dB +17.5 dBm — and should be taken to reach
+about **+19 dBm** flat out. That is the devkit self-test's estimate, scaled up
+from a quiet measurement and capped at the PA's compression point; nobody has
+metered it. Never write "+19 dBm measured".
 
 That is **16 dB above what its own receiver survives**. A TX→RX loopback with no
-attenuator destroys the board. Fit at least 20 dB; 40–50 dB is comfortable.
+attenuator destroys the board. Fit at least 20 dB. Bigger pads are equally
+safe but measure worse: the board's own TX->RX leak equals a 33-60 dB pad on
+channel 0 above 1 GHz, so a 50 dB loop there measures the leak as much as the
+cable. Recommend exactly 20 dB for measurement.
 Documentation and refusals should say this rather than quote the +7 dBm figure
 that applies to a bare AD9361 — most Pluto advice on the internet does, and it
 is wrong here by 10–18 dB.
@@ -105,3 +110,14 @@ nothing attached" with a cable fitted. The probe now programs and restores the
 TX LO and powerdown state, checks the band list, and reads its attenuation
 back before capturing. Return values: 4–7 dB with no cable (on-board leakage),
 ~70 dB through a 20 dB pad; the verdict threshold is 25 dB.
+
+**Open question: is 25 dB safe above 3 GHz?** The devkit measured the on-board
+TX->RX leak across 70 MHz - 6 GHz on 2026-09-18 (`docs/measured-performance.md`
+there). Channel 0's leak grows with frequency, to the equivalent of a 33-51 dB
+pad at 3-6 GHz. Scaled to the probe's 60 dB attenuation and 40 dB RX gain,
+that predicts a no-cable return of roughly 19-28 dB up there, close to or above
+the threshold, which would read as a false "loopback". The 4-7 dB above was
+not recorded with its frequency. Until someone runs the probe with nothing
+attached at 4-6 GHz on channel 0, treat a "loopback" verdict at those
+frequencies with suspicion. The prediction is a scaling estimate, not a
+measurement.

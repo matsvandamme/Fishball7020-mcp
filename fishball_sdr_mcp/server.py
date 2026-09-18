@@ -878,6 +878,9 @@ def sdr_check_rf_setup(
         # probe returns 4-7 dB (on-board TX->RX leakage), and through a 20 dB
         # pad it returns about 70 dB. There is no ambiguous middle to worry
         # about, so the threshold is placed for margin rather than precision.
+        # UNVERIFIED above 3 GHz: the devkit's leak measurement (2026-09-18)
+        # predicts a no-cable return of ~19-28 dB on channel 0 at 3-6 GHz, near
+        # this threshold. See references/sdr-hardware.md, "Open question".
         if loop_db is not None and loop_db > 25:
             verdict = "loopback"
             says = (f"TX and RX are connected to each other. The probe came back "
