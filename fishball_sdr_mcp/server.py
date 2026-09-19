@@ -874,17 +874,31 @@ def sdr_check_rf_setup(
             loop_db = r.probe_loopback(channel_pair)
             log(f"rf setup probe: return {loop_db:.1f} dB above floor")
 
-        # 25 dB is well clear of both measured cases: with no cable at all the
-        # probe returns 4-7 dB (on-board TX->RX leakage), and through a 20 dB
-        # pad it returns about 70 dB. There is no ambiguous middle to worry
-        # about, so the threshold is placed for margin rather than precision.
-        # UNVERIFIED above 3 GHz: the devkit's leak measurement (2026-09-18)
-        # predicts a no-cable return of ~19-28 dB on channel 0 at 3-6 GHz, near
-        # this threshold. See references/sdr-hardware.md, "Open question".
-        if loop_db is not None and loop_db > 25:
+        # The board leaks its own transmitter into its receiver, so even with
+        # nothing attached the probe comes back well above the floor. Measured
+        # 2026-09-19 over 70 MHz - 6 GHz (60 points, both channels):
+        #   nothing attached   up to 42 dB below 3 GHz, up to 48 dB above
+        #   20 dB-pad loop     59-69 dB below 3 GHz, 47.5-60 dB above
+        # Threshold = the leak ceiling + 8 dB. Above 3 GHz a 20 dB loop and
+        # the bare leak overlap, so a return between the two is reported as
+        # uncertain rather than guessed. A bare cable (no pad) - the case that
+        # destroys receivers - returns ~20 dB more and is never ambiguous.
+        leak_ceiling = 48.0 if r.rx_lo() >= 3e9 else 42.0
+        threshold = leak_ceiling + 8.0
+        if loop_db is not None and loop_db > threshold:
             verdict = "loopback"
             says = (f"TX and RX are connected to each other. The probe came back "
-                    f"{loop_db:.0f} dB above the noise floor.")
+                    f"{loop_db:.0f} dB above the noise floor, more than this "
+                    f"board's own internal leak ever produces here "
+                    f"({leak_ceiling:.0f} dB).")
+        elif loop_db is not None and loop_db > leak_ceiling - 6.0:
+            verdict = "uncertain"
+            says = (f"The probe came back {loop_db:.0f} dB above the noise floor. "
+                    f"At this frequency that cannot be told apart from the "
+                    f"board's own TX->RX leak (up to {leak_ceiling:.0f} dB with "
+                    f"nothing attached): there may be a heavily attenuated "
+                    f"loopback, or nothing. A low-loss loop would read above "
+                    f"{threshold:.0f} dB.")
         elif ambient > 15:
             verdict = "antenna on RX"
             says = (f"The receive port is picking up ambient signals "

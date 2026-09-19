@@ -620,9 +620,30 @@ class Radio:
         # the AD9361's transition-free window, so it means what it says.
         rx_mode = self.read(PHY, f"voltage{rxp}", "gain_control_mode")
         rx_gain = self.read(PHY, f"voltage{rxp}", "hardwaregain").split()[0]
+        target = rx_lo + k * rate / n
+        window = max(rate / 512.0, 2000.0)
+
+        def level_at_target() -> tuple[float, float]:
+            # capture() returns interleaved int16 (I, Q, I, Q, ...). Handed to
+            # the spectrum as-is, it was analysed as a real signal: the tone
+            # landed at the wrong frequency and the probe read noise, so it
+            # could not see a loopback at all. Always convert.
+            iq = dsp.interleaved_to_complex(self.capture(16384, rxp))
+            freqs, mags = dsp.spectrum(iq, rate, rx_lo)
+            floor = dsp.noise_floor_db(mags)
+            best = max((m for f, m in zip(freqs, mags) if abs(f - target) < window),
+                       default=floor)
+            return best, floor
+
         try:
             self.write(PHY, f"voltage{rxp}", "gain_control_mode", "manual")
             self.write(PHY, f"voltage{rxp}", "hardwaregain", 40)
+            # Reference, transmitter still silent: whatever already sits at the
+            # probe frequency. An open receive port picks up broadcast FM
+            # strongly enough that, without this, a station at 87.8 MHz read
+            # as a 25.6 dB "return" with nothing attached.
+            time.sleep(0.05)
+            before_db, _ = level_at_target()
             self.write(PHY, TX_LO, "powerdown", 0, output=True)
             self.write(PHY, TX_LO, "frequency", int(rx_lo), output=True)
             self.transmit_samples(values, cyclic=True, channel=str(channel_pair))
@@ -638,13 +659,13 @@ class Radio:
                     f"chip reports {applied} dB - refusing to probe louder than "
                     f"intended.")
             time.sleep(0.15)
-            iq = self.capture(16384, rxp)
-            freqs, mags = dsp.spectrum(iq, rate, rx_lo)
-            floor = dsp.noise_floor_db(mags)
-            target = rx_lo + k * rate / n
-            best = max((m for f, m in zip(freqs, mags)
-                        if abs(f - target) < max(rate / 512.0, 2000.0)), default=floor)
-            return best - floor
+            after_db, floor = level_at_target()
+            # Only the power the probe ADDED counts: subtract the reference in
+            # linear power, so a station under the tone cannot pass for it.
+            added = 10 ** (after_db / 10) - 10 ** (before_db / 10)
+            if added <= 10 ** (floor / 10):
+                return 0.0
+            return 10 * math.log10(added) - floor
         finally:
             try:
                 self.tx_disable()

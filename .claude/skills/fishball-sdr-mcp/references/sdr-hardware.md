@@ -108,16 +108,36 @@ after a band scan, and its own cleanup powered the LO down for every probe
 after the first. Both produced a confident "quiet - consistent with a load or
 nothing attached" with a cable fitted. The probe now programs and restores the
 TX LO and powerdown state, checks the band list, and reads its attenuation
-back before capturing. Return values: 4–7 dB with no cable (on-board leakage),
-~70 dB through a 20 dB pad; the verdict threshold is 25 dB.
+back before capturing.
 
-**Open question: is 25 dB safe above 3 GHz?** The devkit measured the on-board
-TX->RX leak across 70 MHz - 6 GHz on 2026-09-18 (`docs/measured-performance.md`
-there). Channel 0's leak grows with frequency, to the equivalent of a 33-51 dB
-pad at 3-6 GHz. Scaled to the probe's 60 dB attenuation and 40 dB RX gain,
-that predicts a no-cable return of roughly 19-28 dB up there, close to or above
-the threshold, which would read as a false "loopback". The 4-7 dB above was
-not recorded with its frequency. Until someone runs the probe with nothing
-attached at 4-6 GHz on channel 0, treat a "loopback" verdict at those
-frequencies with suspicion. The prediction is a scaling estimate, not a
-measurement.
+**It was also deaf, until 2026-09-19.** `probe_loopback` handed the raw
+interleaved I/Q integers to the spectrum as if they were complex samples: the
+tone landed at the wrong frequency and the probe measured noise (the "4-7 dB
+with no cable" once recorded here). It now converts the capture, and takes a
+reference with the transmitter silent so only power the probe ADDS counts -
+an unconnected port picks up broadcast FM, which read as a 25.6 dB "return"
+at 87.8 MHz.
+
+Fixed, the probe hears the board's own TX->RX leak. Measured over 60
+frequencies, 70 MHz - 6 GHz:
+
+| | below 3 GHz | 3 - 6 GHz |
+|---|---|---|
+| nothing attached (channel 0 / 1) | up to 42 dB | up to 48 dB |
+| 20 dB-pad loop, channel 0 | 59 - 69 dB | 47.5 - 60 dB |
+
+The verdict threshold is the leak ceiling + 8 dB (50 / 56 dB). Above 3 GHz a
+20 dB loop overlaps the bare leak, so returns in between are reported as
+"uncertain". A bare cable returns ~20 dB more than a 20 dB loop and is never
+ambiguous, and that is the case that destroys receivers.
+
+**Open issue: the passive half of `sdr_check_rf_setup` can call an open port
+an antenna.** Its "ambient" figure is the strongest spectral peak above the
+median floor, and anything over 15 dB reads as "antenna on RX". Measured
+2026-09-19 with RX2A open: at 866.3 MHz the AGC had the receiver at 73 dB,
+where a spur at +8.72 MHz stands 30 dB above the floor on BOTH channels -
+including channel 0, which had a padded cable on it, so it is the board's,
+not the air's. At 5.56 GHz the strongest peak is DC/LO leakage at 0 Hz. Until
+the check excludes DC and known internal spurs (or measures at a pinned,
+lower gain), treat "antenna on RX" as "signals present", not as proof of an
+antenna.
