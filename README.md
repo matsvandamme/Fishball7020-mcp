@@ -89,6 +89,20 @@ pure-Python transform otherwise — the server runs with only `mcp` installed.
 loopback probe transmits at −41 dBm on the receive LO; passive when the gate is
 closed) · `sdr_tx_status` · `sdr_tx_chain_state` · `sdr_tx_disable`
 
+**Ask the bib reader** — `sdr_rfid_field` reports what the EPC Gen2 reader
+has in front of its antenna: which chips are answering, how often, how
+strongly, their factory serial numbers, and what the reader makes of the
+field. It asks the reader's own web server rather than the radio, because
+the reader owns the board while it runs and two things driving one board is
+how you get a reader that stops reading. Start it first, from the
+[Fishball7020-ucode8-reader](https://github.com/matsvandamme/Fishball7020-ucode8-reader)
+repository:
+
+```bash
+# run from: that repository's root
+.venv/bin/python host/gui.py --read tid
+```
+
 Every tool takes `response_format`: `markdown` to read, `json` to parse.
 
 ### Three design decisions worth knowing

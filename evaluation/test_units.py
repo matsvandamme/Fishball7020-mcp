@@ -121,6 +121,50 @@ class TestTxBands(unittest.TestCase):
             r.check_tx_frequency(100_000_000)            # unrestricted
 
 
+class TestRfidField(unittest.TestCase):
+    """The bib reader's own web server answers this one, not the radio: the
+    reader owns the board while it works, and two things driving one board
+    is how you get a reader that stops reading."""
+
+    def test_says_what_to_do_when_no_reader_is_running(self):
+        out = server.sdr_rfid_field(url="http://127.0.0.1:1", response_format="markdown")
+        self.assertIn("no reader answered", out)
+        self.assertIn("host/gui.py", out)
+
+    def test_renders_the_field(self):
+        import http.server
+        import json
+        import threading
+        state = {"mode": "live", "reads_per_s": 128.0,
+                 "counts": {"epc_ok": 500, "epc_bad": 0, "queries": 500, "acks": 500},
+                 "signal": {"q": 2, "verdict": {"level": "good", "says": "Reading 2 bibs cleanly."}},
+                 "bibs": {"A": {"epc": "20B8" + "0" * 28, "reads_seen": 300,
+                                "dbm": -55.0, "tid": "E280689420004027"}}}
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                body = json.dumps(state).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *a):
+                pass
+
+        srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            out = server.sdr_rfid_field(url=f"http://127.0.0.1:{srv.server_port}")
+        finally:
+            srv.shutdown()
+        self.assertIn("Reading 2 bibs cleanly.", out)
+        self.assertIn("20B8", out)
+        self.assertIn("-55.0 dBm", out)
+        self.assertIn("4", out)               # four slots a round
+
+
 class TestHostFromUri(unittest.TestCase):
     def test_forms(self):
         self.assertEqual(radio_mod._host_from_uri("ip:192.168.2.1"),

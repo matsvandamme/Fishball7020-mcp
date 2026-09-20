@@ -1262,6 +1262,60 @@ def _sigterm(*_):
     raise SystemExit(0)
 
 
+@server.tool(
+    name="sdr_rfid_field",
+    title="What the bib reader can see",
+    description=(
+        "What the EPC Gen2 bib reader has in front of its antenna right now: which "
+        "chips are answering, how often and how strongly, their serial numbers, and "
+        "what the reader makes of the field. This asks the reader's own web server "
+        "(host/gui.py from the Fishball7020-ucode8-reader repository), so it needs "
+        "that to be running and it never touches the radio itself - the reader owns "
+        "the board while it works. Reading only: it cannot start or stop "
+        "transmitting."),
+    annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False,
+                                idempotentHint=True, openWorldHint=True),
+)
+@_serialized
+def sdr_rfid_field(
+    url: Annotated[str, "where the reader is serving"] = "http://127.0.0.1:8765",
+    response_format: Format = "markdown",
+) -> str:
+    import json as _json
+    import urllib.error
+    import urllib.request
+    try:
+        with urllib.request.urlopen(url.rstrip("/") + "/api/state", timeout=5) as r:
+            state = _json.loads(r.read())
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        return fail(RuntimeError(
+            f"no reader answered at {url}: {exc}. Start it with "
+            f"`.venv/bin/python host/gui.py` in the reader repository."))
+    bibs = list(state.get("bibs", {}).values())
+    signal = state.get("signal", {})
+    counts = state.get("counts", {})
+    payload = {"mode": state.get("mode"), "reads_per_s": state.get("reads_per_s"),
+               "counts": counts, "verdict": (signal.get("verdict") or {}).get("says"),
+               "bibs": bibs}
+    rows = [("Reader", state.get("mode", "?")),
+            ("Reads per second", state.get("reads_per_s", 0)),
+            ("Replies read", counts.get("epc_ok", 0)),
+            ("Failed the CRC", counts.get("epc_bad", 0)),
+            ("Slots per round", 2 ** (signal.get("q") or 0))]
+    md = "## The field\n\n" + formatting.table(rows)
+    if (signal.get("verdict") or {}).get("says"):
+        md += "\n\n" + signal["verdict"]["says"]
+    if bibs:
+        md += "\n\n| Chip ID | Reads | Signal | Serial |\n|---|---|---|---|\n"
+        for b in sorted(bibs, key=lambda x: -(x.get("reads_seen") or 0)):
+            md += (f"| `{b.get('epc', '?')}` | {b.get('reads_seen', 0)} | "
+                   f"{b.get('dbm', '?')} dBm | `{b.get('tid', '')}` |\n")
+    else:
+        md += "\n\nNothing is answering. The reader may be idle - it only "
+        md += "transmits while someone has asked it to read."
+    return formatting.render(payload, md, response_format)
+
+
 def main() -> None:
     log("starting (stdio)")
     # Hosts commonly stop a server with SIGTERM, whose Python default is to die
