@@ -27,6 +27,7 @@ from __future__ import annotations
 import array
 import math
 import os
+import json
 import pathlib
 import struct
 import sys
@@ -37,7 +38,7 @@ from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
-from fishball_sdr_mcp import dsp, radio as radio_mod, server          # noqa: E402
+from fishball_sdr_mcp import dsp, radio as radio_mod, server, sigmf          # noqa: E402
 from fishball_sdr_mcp.iiod import DEFAULT_PORT, mask_for              # noqa: E402
 
 
@@ -430,6 +431,97 @@ class TestLoadIq(unittest.TestCase):
         p = self.path / "odd.iq16"
         p.write_bytes(struct.pack("<4h", 1, 2, 3, 4) + b"\x07")
         self.assertEqual(_load_iq(p, "int16"), [complex(1, 2), complex(3, 4)])
+
+
+class TestSigmfSidecar(unittest.TestCase):
+    """The sidecar is the only place a capture's settings survive the session."""
+
+    class FakeRadio:
+        """Answers what the board would, and refuses one attribute on purpose."""
+        def delivered_rate(self): return 3_000_000
+        def converter_rate(self): return 24_000_000
+        def rx_lo(self): return 900_000_000
+        def read(self, dev, chan, attr, output=False):
+            return {"hardwaregain": "71.000000 dB", "gain_control_mode": "slow_attack",
+                    "rf_bandwidth": "18000000", "rssi": "120.75 dB"}[attr]
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.path = pathlib.Path(self.dir.name)
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def test_meta_path_pairs_with_data(self):
+        self.assertEqual(sigmf.meta_path(pathlib.Path("a/b.sigmf-data")).name,
+                         "b.sigmf-meta")
+
+    def test_meta_path_handles_a_legacy_iq16(self):
+        self.assertEqual(sigmf.meta_path(pathlib.Path("a/b.iq16")).name, "b.sigmf-meta")
+
+    def test_describe_reads_the_board_not_the_request(self):
+        g = sigmf.describe(self.FakeRadio(), 0, 1024)["global"]
+        self.assertEqual(g["core:datatype"], "ci16_le")
+        self.assertEqual(g["core:sample_rate"], 3_000_000)
+        self.assertEqual(g["fishball:hardwaregain_db"], 71.0)
+        self.assertEqual(g["fishball:rssi_db_below_fs"], 120.75)
+        # delivered != converter, so the fabric decimator must be reported engaged
+        self.assertEqual(g["fishball:fabric_decimator"], "engaged")
+
+    def test_full_scale_is_the_twelve_bit_one(self):
+        g = sigmf.describe(self.FakeRadio(), 0, 1024)["global"]
+        self.assertEqual(g["fishball:full_scale"], 2047)
+        self.assertIn("NOT 32768", g["fishball:scaling_note"])
+
+    def test_channel_pair_one_is_rx2(self):
+        g = sigmf.describe(self.FakeRadio(), 1, 1024)["global"]
+        self.assertTrue(g["core:hw"].endswith("RX2"))
+
+    def test_statistics_are_carried_with_dsp_key_names(self):
+        stats = dsp.iq_statistics([complex(2047, 0), complex(-3, 4)])
+        g = sigmf.describe(self.FakeRadio(), 0, 2, stats)["global"]
+        self.assertEqual(g["fishball:clipped_samples"], 1)
+        self.assertIn("clipping_warning", " ".join(g))
+
+    def test_an_unreadable_attribute_is_absent_not_wrong(self):
+        class Mute(self.FakeRadio):
+            def read(self, *a, **k): raise RuntimeError("no")
+        g = sigmf.describe(Mute(), 0, 1024)["global"]
+        self.assertNotIn("fishball:hardwaregain_db", g)
+        self.assertEqual(g["core:sample_rate"], 3_000_000)   # the rest still lands
+
+    def test_written_sidecar_is_valid_json_beside_the_data(self):
+        data = self.path / "c.sigmf-data"
+        data.write_bytes(b"\x00" * 8)
+        meta = sigmf.write(data, sigmf.describe(self.FakeRadio(), 0, 2))
+        self.assertEqual(meta.parent, data.parent)
+        self.assertEqual(json.loads(meta.read_text())["global"]["core:version"], "1.0.0")
+
+
+class TestPruneTakesTheSidecar(unittest.TestCase):
+    """Pruning the data and leaving the metadata describes a file that is gone."""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.prev = os.environ.get("SDR_MCP_CAPTURE_DIR")
+        os.environ["SDR_MCP_CAPTURE_DIR"] = self.dir.name
+
+    def tearDown(self):
+        if self.prev is None:
+            os.environ.pop("SDR_MCP_CAPTURE_DIR", None)
+        else:
+            os.environ["SDR_MCP_CAPTURE_DIR"] = self.prev
+        self.dir.cleanup()
+
+    def test_sidecars_go_with_their_data(self):
+        d = pathlib.Path(self.dir.name)
+        for i in range(3):
+            (d / f"c{i}.sigmf-data").write_bytes(b"\x00" * 8)
+            (d / f"c{i}.sigmf-meta").write_text("{}")
+            os.utime(d / f"c{i}.sigmf-data", (1000 + i, 1000 + i))
+        self.assertEqual(server.prune_captures(keep=1), 2)
+        left = sorted(p.name for p in d.iterdir())
+        self.assertEqual(left, ["c2.sigmf-data", "c2.sigmf-meta"])
 
 
 class TestSampleGpioPatternValidation(unittest.TestCase):

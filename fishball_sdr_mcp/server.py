@@ -23,7 +23,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
-from . import dsp, errors, formatting
+from . import dsp, errors, formatting, sigmf
 from . import radio as radio_module
 from .radio import PHY, PROBE_ATTEN_DB, TX, TX_LO, Radio, tx_allowed
 
@@ -127,7 +127,9 @@ def prune_captures(keep: int | None = None) -> int:
     if keep <= 0:
         return 0
     try:
-        files = sorted((p for p in capture_dir().glob("*.iq16") if p.is_file()),
+        files = sorted((p for p in capture_dir().iterdir()
+                        if p.is_file() and (p.suffix == ".iq16"
+                                            or p.name.endswith(sigmf.DATA_SUFFIX))),
                        key=lambda p: p.stat().st_mtime, reverse=True)
     except OSError:
         return 0
@@ -137,7 +139,14 @@ def prune_captures(keep: int | None = None) -> int:
             old.unlink()
             removed += 1
         except OSError:
-            pass                        # in use, or not ours to delete
+            continue                    # in use, or not ours to delete
+        # Take the sidecar with it. Pruning the data and leaving the metadata
+        # behind is worse than leaving both: a .sigmf-meta with no .sigmf-data
+        # describes a file that no longer exists.
+        try:
+            sigmf.meta_path(old).unlink(missing_ok=True)
+        except OSError:
+            pass
     return removed
 
 
@@ -604,7 +613,7 @@ def sdr_capture_iq(
         r = radio()
         raw = r.capture(samples, channel_pair)
         iq = dsp.interleaved_to_complex(raw)
-        name = filename or f"capture_{int(time.time())}_{samples}.iq16"
+        name = filename or f"capture_{int(time.time())}_{samples}{sigmf.DATA_SUFFIX}"
         if pathlib.Path(name).name != name or name.startswith(".") or not name.strip():
             raise ValueError("filename must be a bare name, not a path or a dotfile.")
         path = capture_dir() / name
@@ -613,9 +622,16 @@ def sdr_capture_iq(
         if pruned:
             log(f"pruned {pruned} older capture(s) from {capture_dir()}")
         stats = dsp.iq_statistics(iq)
-        payload = {"path": str(path), "format": "interleaved int16 (I,Q)",
+        # The metadata has to live beside the samples, not only in this reply -
+        # the file outlives the conversation that produced it.
+        meta = sigmf.write(path, sigmf.describe(r, channel_pair, samples, stats))
+        payload = {"path": str(path), "sigmf_meta": str(meta),
+                   "format": "interleaved int16 (I,Q), SigMF ci16_le",
+                   "full_scale": sigmf.RX_FULL_SCALE,
                    "sample_rate_hz": r.delivered_rate(), "center_hz": r.rx_lo(), **stats}
-        rows = [("File", f"`{path}`"), ("Format", "interleaved int16 (I,Q)"),
+        rows = [("File", f"`{path}`"), ("Metadata", f"`{meta}`"),
+                ("Format", "interleaved int16 (I,Q) - SigMF `ci16_le`"),
+                ("Full scale", f"±{sigmf.RX_FULL_SCALE} (12-bit, not ±32767)"),
                 ("Sample rate", formatting.hz(payload["sample_rate_hz"])),
                 ("Centre", formatting.hz(payload["center_hz"]))]
         rows += [(k.replace("_", " "), v) for k, v in stats.items()]
@@ -766,6 +782,7 @@ def _load_iq(path: pathlib.Path, fmt: str) -> list[complex]:
     if fmt == "auto":
         suffix = path.suffix.lower()
         fmt = {".iq16": "int16", ".bin": "int16", ".raw": "int16", ".sc16": "int16",
+               ".sigmf-data": "int16",          # what sdr_capture_iq now writes
                ".cf32": "complex64", ".fc32": "complex64", ".iq": "complex64",
                ".wav": "wav"}.get(suffix, "int16")
     data = path.read_bytes()

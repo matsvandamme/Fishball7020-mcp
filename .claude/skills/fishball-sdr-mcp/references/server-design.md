@@ -71,7 +71,7 @@ this URI, check the USB Ethernet interface is up.
 |---|---|---|
 | `SDR_MCP_URI` | `ip:192.168.2.1` | where the board is |
 | `SDR_MCP_TIMEOUT` | `10` | socket timeout, seconds |
-| `SDR_MCP_CAPTURE_DIR` | `~/.cache/fishball-sdr` | where `sdr_capture_iq` writes |
+| `SDR_MCP_CAPTURE_DIR` | `~/.cache/fishball-sdr` | where `sdr_capture_iq` writes its `.sigmf-data` / `.sigmf-meta` pair |
 | `SDR_MCP_ALLOW_TX` | unset (permitted) | set to `0` to forbid every tool that opens a TX buffer or keys a tone |
 | `SDR_MCP_TX_BANDS` | unset | restrict TX, e.g. `2400-2483.5` (MHz) |
 | `SDR_MCP_NO_TX_QUIESCE` | unset | leave the transmitter exactly as found |

@@ -104,6 +104,20 @@ generic "+7 dBm" figure that applies to a bare AD9361.
 **Never return raw IQ inline.** Even a short capture is megabytes. Write to
 `SDR_MCP_CAPTURE_DIR` and return the path plus statistics.
 
+**And write the metadata beside the samples, not only in the reply.** A capture
+returned through MCP outlives the conversation that produced it, and whoever
+opens it next cannot scroll back. `sdr_capture_iq` writes a **SigMF pair** —
+`<name>.sigmf-data` holding the untouched interleaved int16, and
+`<name>.sigmf-meta` holding rate, centre frequency, gain, AGC mode, RSSI,
+bandwidth and the capture statistics. Every field is read back off the board
+after configuration rather than echoed from the request, because gain quantises
+to the AD9361's table and `rf_bandwidth` snaps to what the filter supports.
+`fishball_sdr_mcp/sigmf.py` builds it. Two things that broke when this was
+added and will break again: **pruning must delete the sidecar with its data**,
+or a `.sigmf-meta` survives describing a file that no longer exists; and the
+transmit path's extension table must recognise `.sigmf-data`, or a capture
+cannot be retransmitted.
+
 **Levels are dBFS against a 12-bit converter** (full scale ±2047) on receive,
 but transmit takes the **full 16 bits**. Scaling transmit to ±2047 emits 24 dB
 low. This asymmetry is measured, not assumed.

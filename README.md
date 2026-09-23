@@ -107,11 +107,24 @@ Every tool takes `response_format`: `markdown` to read, `json` to parse.
 
 ### Three design decisions worth knowing
 
-**`sdr_capture_iq` writes to a file and returns the path.** It never returns
-samples inline — even a short capture is megabytes, and putting that through a
-context window helps nobody. The format is interleaved little-endian `int16`,
-which GNU Radio reads as a file source of type *short* and which
-`sdr_transmit_iq` accepts straight back.
+**`sdr_capture_iq` writes a SigMF pair and returns both paths.** It never
+returns samples inline — even a short capture is megabytes, and putting that
+through a context window helps nobody. The samples go to `<name>.sigmf-data` as
+interleaved little-endian `int16`, which GNU Radio reads as a file source of
+type *short* and which `sdr_transmit_iq` accepts straight back.
+
+Beside it goes `<name>.sigmf-meta`, because a capture returned through MCP
+outlives the conversation that produced it and whoever opens it next cannot
+scroll back to find the sample rate. The sidecar carries rate, centre frequency,
+gain, AGC mode, RSSI, bandwidth and the capture statistics — every one **read
+back off the board** after configuration rather than echoed from the request,
+since gain quantises to the AD9361's own table and `rf_bandwidth` snaps to what
+the filter design supports.
+
+It also records the one thing SigMF has no field for: receive full scale on this
+board is **±2047**, not ±32767, because the converters are 12-bit sign-extended
+into an int16. Divide by 32768 and every absolute level is 24 dB low — uniformly,
+so nothing looks wrong.
 
 **`sdr_set_fpga_filter` works by setting a sample rate.** There is no "filter
 on" attribute anywhere. Writing `cf-ad9361-lpc`'s `sampling_frequency` to one
@@ -143,7 +156,7 @@ measured, not assumed — see [Notes from the hardware](#notes-from-the-hardware
 |---|---|---|
 | `SDR_MCP_URI` | `ip:192.168.2.1` | Where the board is |
 | `SDR_MCP_TIMEOUT` | `10` | Socket timeout, seconds |
-| `SDR_MCP_CAPTURE_DIR` | `~/.cache/fishball-sdr` | Where `sdr_capture_iq` writes |
+| `SDR_MCP_CAPTURE_DIR` | `~/.cache/fishball-sdr` | Where `sdr_capture_iq` writes its `.sigmf-data` / `.sigmf-meta` pair |
 | `SDR_MCP_ALLOW_TX` | unset (**permitted**) | Set to `0` to forbid transmitting |
 | `SDR_MCP_TX_BANDS` | unset | Restrict TX, e.g. `2400-2483.5` (MHz) |
 | `SDR_MCP_NO_TX_QUIESCE` | unset | Leave the transmitter exactly as found |
