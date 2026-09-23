@@ -1,10 +1,32 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/img/vmat-logo-dark.png">
+    <img src="docs/img/vmat-logo.png" alt="VMAT" width="110">
+  </picture>
+</p>
+
 # fishball-sdr-mcp
+
+<p align="center">
+  <img src="https://img.shields.io/badge/protocol-MCP%202025--06--18-8A3FFC" alt="Protocol: MCP 2025-06-18">
+  <img src="https://img.shields.io/badge/board-Zynq%20XC7Z020%20%2B%20AD9361-blue" alt="Board: Zynq XC7Z020 + AD9361">
+  <img src="https://img.shields.io/badge/tools-21-1B6480" alt="21 tools">
+  <img src="https://img.shields.io/badge/python-3.10%2B-3776ab" alt="Python 3.10+">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--2.0-lightgrey" alt="License: GPL-2.0"></a>
+</p>
+
+> **Sibling repository.** This server drives the radio. Its sibling,
+> [**fishball7020-fpga-devkit**](https://github.com/matsvandamme/fishball7020-fpga-devkit),
+> builds the firmware that runs on it — HDL, kernel, bootloader, and a
+> [52-lesson course](https://matsvandamme.github.io/fishball7020-fpga-devkit/course/)
+> on how the whole thing works. Use them together: the devkit changes what the
+> board *is*, this server changes what it is *doing*.
 
 Ask an LLM what's on the air, and have it actually go and look.
 
 An [MCP](https://modelcontextprotocol.io) server for the **Fishball7020 /
 PlutoSky** software-defined radio (Zynq-7020 + AD9361). It turns the board into
-20 tools an assistant can use: tune it, sweep a band, measure a spectrum,
+21 tools an assistant can use: tune it, sweep a band, measure a spectrum,
 capture IQ, engage the FPGA channel filter, and transmit.
 
 <sub>**New to any of that?** A *software-defined radio* is a receiver and
@@ -31,6 +53,21 @@ The board's firmware and FPGA build system live in a companion repository,
 [fishball7020-fpga-devkit](https://github.com/matsvandamme/fishball7020-fpga-devkit).
 
 ---
+
+## I want to…
+
+| I want to… | Start here |
+|---|---|
+| get it running with Claude Desktop or Claude Code | [Quick start](#quick-start) |
+| see every tool and what it does | [Tools](#tools) |
+| point it at a board on a different address | [Configuration](#configuration) — `SDR_MCP_URI` |
+| transmit, safely | [Transmitting](#transmitting) — read this one before keying anything |
+| work out what my RF ports are connected to | `sdr_check_rf_setup`, and [Before you transmit](#before-you-transmit-what-is-connected) |
+| turn transmitting off entirely | [Turning transmit off](#turning-transmit-off) — `SDR_MCP_ALLOW_TX=0` |
+| understand why a capture is int16 and what full scale is | [Three design decisions](#three-design-decisions-worth-knowing) |
+| run the tests | [Testing](#testing) |
+| know what this board actually measures like | [Notes from the hardware](#notes-from-the-hardware) |
+| change the firmware itself, not just drive it | the sibling [fishball7020-fpga-devkit](https://github.com/matsvandamme/fishball7020-fpga-devkit) |
 
 ## Quick start
 
