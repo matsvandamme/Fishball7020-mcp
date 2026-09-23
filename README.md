@@ -193,6 +193,22 @@ measured, not assumed — see [Notes from the hardware](#notes-from-the-hardware
 |---|---|---|
 | `SDR_MCP_URI` | `ip:192.168.2.1` | Where the board is |
 | `SDR_MCP_TIMEOUT` | `10` | Socket timeout, seconds |
+
+**If your board is not on `192.168.2.1`.** That address is the USB Ethernet
+gadget. A board plugged into a router has a second, different address on `eth0`,
+and you do not have to know it — the board advertises itself over mDNS, so
+`ip:pluto.local` works as a URI and keeps working when the address changes:
+
+```bash
+# run from: your HOST
+iio_info -s                                  # what is out there, with addresses
+export SDR_MCP_URI=ip:pluto.local            # or ip:192.168.1.50
+```
+
+Changing the board's own address is a devkit matter rather than an MCP one:
+[changing the board's IP address](https://github.com/matsvandamme/fishball7020-fpga-devkit/blob/main/docs/networking.md)
+covers the four routes, including why editing `uEnv.txt` on the SD card looks
+like it works and does not.
 | `SDR_MCP_CAPTURE_DIR` | `~/.cache/fishball-sdr` | Where `sdr_capture_iq` writes its `.sigmf-data` / `.sigmf-meta` pair |
 | `SDR_MCP_ALLOW_TX` | unset (**permitted**) | Set to `0` to forbid transmitting |
 | `SDR_MCP_TX_BANDS` | unset | Restrict TX, e.g. `2400-2483.5` (MHz) |
