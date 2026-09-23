@@ -126,6 +126,12 @@ pure-Python transform otherwise — the server runs with only `mcp` installed.
 loopback probe transmits at −41 dBm on the receive LO; passive when the gate is
 closed) · `sdr_tx_status` · `sdr_tx_chain_state` · `sdr_tx_disable`
 
+> What this board's transmitter actually produces — ten modulations sent from a
+> Fishball7020 and received on a **HackRF One**, with spectra, constellations,
+> EVM and spur attribution — is measured in the devkit's
+> [modulation gallery](https://github.com/matsvandamme/fishball7020-fpga-devkit/blob/main/docs/modulation-gallery.md),
+> along with the code to repeat it.
+
 **Ask the bib reader** — `sdr_rfid_field` reports what the EPC Gen2 reader
 has in front of its antenna: which chips are answering, how often, how
 strongly, their factory serial numbers, and what the reader makes of the
