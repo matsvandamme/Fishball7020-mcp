@@ -101,6 +101,18 @@ receive port rated to **+2.5 dBm**. Any loopback needs at least 20 dB of
 attenuation. Refusals and docs should say this plainly rather than repeat the
 generic "+7 dBm" figure that applies to a bare AD9361.
 
+**`sdr_set_fpga_filter` is a two-channel decision, not a one-channel one.** On
+**stock** firmware, engaging the decimator ruins channel 1. Upstream routes
+channel 0 through `rx_fir_decimator` and sends channel 1 straight to `cpack`
+inputs 2 and 3 - so the moment decimation engages, channel 1 is sampled at one
+eighth the rate with **no anti-alias filter of its own**. Measured on the board:
+stock channel 1 is flat at +1.4 dB right across a 0.2-20 MHz sweep (no
+attenuation at all), and a 10 MHz tone at 7.68 MSPS arrives as a tall alias at
++2.32 MHz. The devkit's `optional/0004` patch filters both channels and takes it
+to about -70 dB beyond 5 MHz. So: engaging the filter is safe on patched
+firmware, and quietly corrupts channel 1 on stock. If a caller asks for both
+channels with the filter on, say which firmware that needs.
+
 **Never return raw IQ inline.** Even a short capture is megabytes. Write to
 `SDR_MCP_CAPTURE_DIR` and return the path plus statistics.
 
@@ -149,6 +161,12 @@ match against the firmware and no C extension to build.
 - Render through `formatting.render`, which enforces `CHARACTER_LIMIT`.
 - Anything that transmits: check the gate, check `SDR_MCP_TX_BANDS`, log the
   call to stderr with frequency, gain and sample count.
+- **Add the tool's name to `EXPECTED_TOOLS` in `evaluation/smoke_test.py`, in
+  the same commit.** The smoke test asserts the advertised set matches that
+  list by name. Forgetting it is not theoretical: `sdr_rfid_field` landed
+  without it and CI was red for four pushes, failing on arithmetic that had
+  nothing to do with the commits it blocked. A unit test now catches the
+  drift in a tenth of a second and names the missing tool.
 - Add a question to `evaluation/questions.xml` if the tool exposes a fact worth
   checking, and make sure `smoke_test.py` still passes.
 
