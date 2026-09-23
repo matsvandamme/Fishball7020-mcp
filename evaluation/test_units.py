@@ -28,6 +28,7 @@ import array
 import math
 import os
 import json
+import re
 import pathlib
 import struct
 import sys
@@ -586,6 +587,54 @@ class TestAdvertisedToolsMatchTheList(unittest.TestCase):
 
         registered = {t.name for t in server.server._tool_manager.list_tools()}
         self.assertEqual(registered, smoke_test.EXPECTED_TOOLS)
+
+
+class TestSkillFrontmatterParses(unittest.TestCase):
+    """SKILL.md's YAML frontmatter must parse, and it silently did not.
+
+    A plain YAML scalar cannot contain a colon followed by a space: the parser
+    reads the second colon as another mapping key and gives up on the block.
+    The description here is one long sentence, and an appositive written
+    "facts a server author keeps needing: this board has ..." broke it at
+    column 445 with "mapping values are not allowed in this context".
+
+    Nothing failed loudly. The file was still valid Markdown, the server still
+    ran, CI was still green - the skill just did not load, which is invisible
+    until you notice the rules are not being followed. The sibling repo writes
+    the same appositive with a spaced hyphen, which is why its frontmatter has
+    never had this problem.
+
+    Checked without PyYAML because this file is standard library only. That
+    means a plain-scalar check rather than a real parse, so it covers the
+    defect that actually happened, not every way YAML can be malformed.
+    """
+
+    KEY = re.compile(r"^(\s*)([A-Za-z_][\w-]*): (.*)$")
+
+    def test_no_bare_colon_in_an_unquoted_value(self):
+        skills = sorted(pathlib.Path(__file__).resolve().parent.parent.rglob("SKILL.md"))
+        self.assertTrue(skills, "no SKILL.md found - has the skill moved?")
+        for skill in skills:
+            lines = skill.read_text().splitlines()
+            self.assertEqual(lines[0].strip(), "---", f"{skill} has no frontmatter")
+            end = lines.index("---", 1)
+            for n, line in enumerate(lines[1:end], start=2):
+                m = self.KEY.match(line)
+                if not m:
+                    continue
+                value = m.group(3)
+                # Quoted and block scalars may hold anything; only a plain
+                # scalar is ambiguous to the parser.
+                if value[:1] in ('"', "'", "|", ">", "[", "{", ""):
+                    continue
+                col = value.find(": ")
+                if col != -1:
+                    self.fail(
+                        f"{skill.name} line {n}, key {m.group(2)!r}: unquoted value "
+                        f"contains a colon-space at column {len(line) - len(value) + col + 1}, "
+                        f"which ends the scalar. Use ' - ' instead, or quote the value.\n"
+                        f"  ...{value[max(0, col - 40):col + 40]}..."
+                    )
 
 
 # _to_dac and _load_iq are module-private helpers in server.py; bind them once
