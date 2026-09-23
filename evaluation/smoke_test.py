@@ -33,6 +33,35 @@ READ_ONLY_TOOLS = [
     "sdr_tx_status",
 ]
 
+# Every tool the server is supposed to advertise. This was a count once, and a
+# count tells you a number changed without telling you which tool it was - and
+# it goes stale silently, so adding a tool fails CI on the arithmetic rather
+# than on anything real. Naming them means a disappearance is named too.
+# Add the name here in the same commit that adds the tool.
+EXPECTED_TOOLS = {
+    "sdr_board_health",
+    "sdr_capture_iq",
+    "sdr_check_rf_setup",
+    "sdr_configure_rx",
+    "sdr_find_board",
+    "sdr_get_status",
+    "sdr_list_devices",
+    "sdr_read_attribute",
+    "sdr_rfid_field",
+    "sdr_sample_gpio",
+    "sdr_sample_gpio_clock",
+    "sdr_scan_band",
+    "sdr_set_fpga_filter",
+    "sdr_spectrum",
+    "sdr_transmit_iq",
+    "sdr_transmit_waveform",
+    "sdr_tune",
+    "sdr_tx_chain_state",
+    "sdr_tx_disable",
+    "sdr_tx_status",
+    "sdr_tx_tone",
+}
+
 
 class Server:
     """A running server plus the JSON-RPC framing to talk to it."""
@@ -129,8 +158,15 @@ def main() -> int:
 
         listed = s.list_tools()
         tools = listed.get("result", {}).get("tools", [])
-        names = sorted(t["name"] for t in tools)
-        check("tools/list", len(tools) == 20, f"{len(tools)} tools (expected 20)")
+        names = {t["name"] for t in tools}
+        missing = sorted(EXPECTED_TOOLS - names)
+        extra = sorted(names - EXPECTED_TOOLS)
+        detail = f"{len(tools)} tools"
+        if missing:
+            detail += ", missing: " + ", ".join(missing)
+        if extra:
+            detail += ", undeclared: " + ", ".join(extra)
+        check("tools/list", not missing and not extra, detail)
 
         # Every tool needs a description and an input schema, or an agent cannot
         # use it correctly.

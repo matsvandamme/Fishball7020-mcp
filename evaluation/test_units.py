@@ -571,6 +571,23 @@ class TestDescribeErrors(unittest.TestCase):
         self.assertIn("Invalid request", errors.describe(ValueError("bad")))
 
 
+class TestAdvertisedToolsMatchTheList(unittest.TestCase):
+    """The smoke test's EXPECTED_TOOLS must be the tools the server registers.
+
+    This lived only in the smoke test, as a count, and drifted: a commit added
+    sdr_rfid_field without touching the number, and CI went red on four pushes
+    for arithmetic rather than for anything wrong with the server. Checking it
+    here means the drift is caught in a tenth of a second, and named.
+    """
+
+    def test_registered_tools_are_exactly_the_expected_set(self):
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+        import smoke_test
+
+        registered = {t.name for t in server.server._tool_manager.list_tools()}
+        self.assertEqual(registered, smoke_test.EXPECTED_TOOLS)
+
+
 # _to_dac and _load_iq are module-private helpers in server.py; bind them once
 # here rather than reaching through the module in every test.
 _to_dac = server._to_dac
