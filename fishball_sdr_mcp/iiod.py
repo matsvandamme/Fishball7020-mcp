@@ -39,7 +39,7 @@ import socket
 import struct
 from typing import Iterable, Sequence
 
-DEFAULT_HOST = "192.168.2.1"
+DEFAULT_HOST = "fishball.local"      # the name; the address moves
 DEFAULT_PORT = 30431
 DEFAULT_TIMEOUT = 10.0
 

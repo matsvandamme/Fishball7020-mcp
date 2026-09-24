@@ -197,7 +197,7 @@ measured, not assumed — see [Notes from the hardware](#notes-from-the-hardware
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `SDR_MCP_URI` | `ip:192.168.2.1` | Where the board is |
+| `SDR_MCP_URI` | `ip:fishball.local` | Where the board is. A name, not an address, so it survives DHCP moving the board |
 | `SDR_MCP_TIMEOUT` | `10` | Socket timeout, seconds |
 
 **If your board is not on `192.168.2.1`.** That address is the USB Ethernet

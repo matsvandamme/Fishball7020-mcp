@@ -39,7 +39,11 @@ PROBE_ATTEN_DB = 60.0
 
 
 def _env_uri() -> str:
-    return os.environ.get("SDR_MCP_URI", "ip:192.168.2.1")
+    # A NAME, not an address. The board announces itself over mDNS, and the
+    # address a router gives it moves; 192.168.2.1 is only right when a USB
+    # cable is the path, and it is a private address other things use too - a
+    # VPN routing it elsewhere is enough to send every request to a stranger.
+    return os.environ.get("SDR_MCP_URI", "ip:fishball.local")
 
 
 def _host_from_uri(uri: str) -> tuple[str, int]:
@@ -54,8 +58,8 @@ def _host_from_uri(uri: str) -> tuple[str, int]:
 def find_boards(extra: list[str] | None = None) -> list[dict]:
     """Which addresses actually answer IIOD?
 
-    The server defaults to the USB gadget's 192.168.2.1. A board on Ethernet
-    with DHCP is somewhere else, and the only symptom is a connection error
+    The server defaults to the name fishball.local. If mDNS is unavailable
+    here, or the board was renamed, the only symptom is a connection error
     that says nothing about where to look. Try the obvious places and report
     what answered, so the fix is "set SDR_MCP_URI to this" rather than a hunt.
     """

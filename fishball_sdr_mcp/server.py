@@ -542,7 +542,7 @@ def sdr_sample_gpio_clock(
     description=(
         "Look for a Fishball7020 on the usual addresses and report what to set "
         "SDR_MCP_URI to.\n\n"
-        "The server defaults to ip:192.168.2.1, which is the USB gadget's address. A "
+        "The server defaults to ip:fishball.local, the name the board announces. A "
         "board on Ethernet with DHCP is somewhere else entirely, and the only symptom "
         "is a connection error with no hint about where to look. This tries the USB "
         "address, fishball.local, pluto.local, and any address already in the "

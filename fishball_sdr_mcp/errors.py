@@ -13,7 +13,7 @@ import socket
 from .iiod import IiodError
 
 # Filled in by radio.py so connection errors can name the URI actually in use.
-_URI_HINT = "ip:192.168.2.1"
+_URI_HINT = "ip:fishball.local"
 
 
 def set_uri_hint(uri: str) -> None:
@@ -69,9 +69,10 @@ def describe(exc: BaseException) -> str:
     if isinstance(exc, (ConnectionError, TimeoutError, socket.timeout, socket.gaierror,
                         OSError)) and not isinstance(exc, IiodError):
         return (
-            f"Cannot reach the radio at {_URI_HINT}. Check the board is powered and "
-            f"enumerated, that the USB Ethernet interface is up, and that "
-            f"'ping 192.168.2.1' answers. Set SDR_MCP_URI to use a different address. "
+            f"Cannot reach the radio at {_URI_HINT}. Check the board is powered, and "
+            f"that the name resolves - mDNS needs avahi on this machine. "
+            f"sdr_find_board looks for it and says what to set SDR_MCP_URI to; "
+            f"ip:192.168.2.1 is the USB gadget if a cable is attached. "
             f"({type(exc).__name__}: {exc})")
 
     if isinstance(exc, ValueError):
