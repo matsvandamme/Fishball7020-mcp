@@ -203,12 +203,14 @@ measured, not assumed — see [Notes from the hardware](#notes-from-the-hardware
 **If your board is not on `192.168.2.1`.** That address is the USB Ethernet
 gadget. A board plugged into a router has a second, different address on `eth0`,
 and you do not have to know it — the board advertises itself over mDNS, so
-`ip:pluto.local` works as a URI and keeps working when the address changes:
+`ip:Fishball7020.local` works as a URI and keeps working when the address
+changes. (`Fishball7020` is the devkit's default hostname; a board on an
+unpatched rootfs still answers to `pluto.local`.)
 
 ```bash
 # run from: your HOST
 iio_info -s                                  # what is out there, with addresses
-export SDR_MCP_URI=ip:pluto.local            # or ip:192.168.1.50
+export SDR_MCP_URI=ip:Fishball7020.local     # or ip:192.168.1.50
 ```
 
 Changing the board's own address is a devkit matter rather than an MCP one:

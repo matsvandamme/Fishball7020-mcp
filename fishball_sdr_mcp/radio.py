@@ -66,7 +66,11 @@ def find_boards(extra: list[str] | None = None) -> list[dict]:
     current, _ = _host_from_uri(_env_uri())
     if current not in candidates:
         candidates.insert(0, current)
-    for name in ("pluto.local", "fishball.local"):
+    # Fishball7020 is the devkit's default hostname from firmware/patches/0013;
+    # pluto is what an unpatched rootfs still answers to, and was buildroot's
+    # default inherited from the ADALM-Pluto. Names are cheap to try and are the
+    # only thing that keeps working when DHCP moves the address.
+    for name in ("Fishball7020.local", "pluto.local", "fishball.local"):
         try:
             candidates.append(socket.gethostbyname(name))
         except OSError:
