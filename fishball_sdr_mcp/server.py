@@ -545,7 +545,7 @@ def sdr_sample_gpio_clock(
         "The server defaults to ip:192.168.2.1, which is the USB gadget's address. A "
         "board on Ethernet with DHCP is somewhere else entirely, and the only symptom "
         "is a connection error with no hint about where to look. This tries the USB "
-        "address, Fishball7020.local, pluto.local, and any address already in the "
+        "address, fishball.local, pluto.local, and any address already in the "
         "host's ARP table, and "
         "reports which of them actually answers IIOD."),
     annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False,
@@ -557,7 +557,7 @@ def sdr_find_board(response_format: Format = "markdown") -> str:
         found = radio_module.find_boards()
         if not found:
             body = ("## No board found\n\n"
-                    "Tried the USB gadget address, `Fishball7020.local`, `pluto.local`, and the host's ARP "
+                    "Tried the USB gadget address, `fishball.local`, `pluto.local`, and the host's ARP "
                     "neighbours. Check that the board is powered, that its USB or "
                     "Ethernet cable is connected, and that it has finished booting "
                     "(about 30 seconds). If it is on a network this host cannot see, "

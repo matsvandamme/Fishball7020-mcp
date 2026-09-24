@@ -38,16 +38,16 @@ reports what the ports appear to be attached to — and states the limit plainly
 the transmit socket has no detector, so whether an antenna is on *it* cannot be
 measured by anything. Run it whenever the cabling is not already known.
 
-**Prefer a NAME over an address.** `SDR_MCP_URI=ip:Fishball7020.local` survives
+**Prefer a NAME over an address.** `SDR_MCP_URI=ip:fishball.local` survives
 the router handing out a different address; a hard-coded IP does not, and the
-only symptom is a connection error. `Fishball7020` is the devkit's default
+only symptom is a connection error. `fishball` is the devkit's default
 hostname (its `firmware/patches/0013`); a board on an older rootfs answers to
 `pluto.local`. Two separate names are in play - mDNS, which is what these URIs
 use, and the DHCP hostname a router displays, which stock firmware never sends.
 
 **`sdr_find_board` is the answer to "it cannot reach the radio".** The default
 `ip:192.168.2.1` is the USB gadget; a board on Ethernet with DHCP is elsewhere
-and the only symptom is a connection error. It tries the default, `Fishball7020.local`,
+and the only symptom is a connection error. It tries the default, `fishball.local`,
 `pluto.local`, `fishball.local` and up to 16 ARP neighbours concurrently with an
 8 s deadline,
 and reports `hw_model` plus what to set `SDR_MCP_URI` to. A file error (missing
