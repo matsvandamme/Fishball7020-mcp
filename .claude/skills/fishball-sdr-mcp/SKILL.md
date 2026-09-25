@@ -99,6 +99,20 @@ EOF or SIGTERM (handled) both reach that code. It cannot know about a buffer
 some other process started, and a SIGKILL skips it; say so rather than promise
 more.
 
+What catches a SIGKILL is the **firmware**, not this server, and only on a
+board running devkit patch `0015` or later: the driver mutes when the converter
+stops being fed (`tx_starve_timeout_ms`, 250 ms by default), which covers a
+killed client, a stalled one, and a buffer enabled and never fed. Measured at
+0.27 s. **Cyclic transmits are exempt by design** - the hardware repeats one
+buffer forever, so a kill is indistinguishable from a normal return - and that
+is the one case where "stop it explicitly" is still the only protection.
+Stock firmware has none of this. Do not promise it without checking:
+
+```bash
+# run on the board
+cat /sys/bus/iio/devices/iio:device2/tx_starve_timeout_ms   # absent on stock
+```
+
 **Both transmit chains are reachable.** `sdr_tx_tone`, `sdr_transmit_iq` and
 `sdr_transmit_waveform` take `channel` = `"0"` (TX1), `"1"` (TX2) or `"both"`,
 which is the default.
