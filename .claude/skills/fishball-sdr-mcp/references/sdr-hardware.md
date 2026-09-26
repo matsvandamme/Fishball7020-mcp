@@ -72,6 +72,63 @@ All confirmed against a live board running IIOD 0.25.
 - **Large transfers time out on the board, not the client.** 1,048,576 samples
   succeeds, 4,194,304 fails with `-110 ETIMEDOUT`, and raising the client
   timeout does not help. Chunk at 262,144 and loop `READBUF` on one open buffer.
+- **`-16 EBUSY` on a buffer is a stale session ON THE BOARD.** A client that is
+  killed rather than closed leaves its session open, holding the DMA. The board
+  showed three live connections on port 30431 while the host showed none, and
+  every later transmit allocation was refused indefinitely. Restarting the
+  client, or the host, changes nothing; `killall iiod` on the board clears it,
+  and so does a reboot. Do not read a size limit into it - a 4 MB transmit
+  buffer allocates fine as a fresh process's first request while a 1 MB one is
+  refused as the same process's second. An hour went into a non-existent
+  "1 MB ceiling" because the large sizes were tested second.
+- **`-104 ECONNRESET` while the digital loopback is engaged.** Allocating a
+  large transmit buffer with `loopback` set made IIOD reset the session, and
+  the reset then left the DMA allocated, producing the `-16` cascade above.
+  Memory was not the cause: 963 MB free and 260 of 262 MB CMA free.
+
+## Transmitting is latency-critical; receiving is not
+
+Anything this server does that streams to the DAC has a deadline. Receiving
+tolerates a slow link - samples pile up on the board and some are lost, which
+libiio reports as an overflow. **Transmitting does not**: the converter has to
+be fed in real time, so a late buffer means it runs dry, and on this firmware
+**patch 0015 mutes the transmitter after 250 ms of starvation** and switches
+the data source to the internal DDS. The failure mode is the nasty one - the
+client still looks like it is transmitting and the receiver sees exactly zero.
+
+Measured over a wireless host link: transmit and receive together at 4 MS/s
+produced bursts of 20-40 underflows in 45 s, each beside `Unable to push
+buffer: Connection timed out`, while transmit alone at the same rate and
+buffer produced none. It is intermittent - the same configuration ran clean an
+hour later - so it is channel contention rather than a throughput limit.
+
+The defence is buffer **duration**, `buffer / sample_rate`, because that is the
+length of stall the DAC can ride out. Lowering the rate helps twice (more
+slack, less traffic); enlarging the buffer helps once. A one-shot or cyclic
+buffer sidesteps the whole problem, which is why `sdr_tx_tone` and
+`sdr_transmit_waveform` are safer here than a continuous stream would be.
+
+## The internal digital loopback: exercise transmit, radiate nothing
+
+`loopback` is a debugfs attribute on `ad9361-phy`: 0 off, 1 digital TX->RX,
+2 digital RX->TX. With it at 1 the transmit samples reach the receiver inside
+the chip, past the mixers and the power amplifier, so **nothing is radiated**.
+That makes it the right way to check a transmit-and-receive path before making
+a licensing decision on the operator's behalf. In the devkit it is
+`./devkit loopback on|off`.
+
+Three things to know before relying on it:
+
+- It does **not** translate frequency, so a transmit LO offset and a receive
+  LO offset do not cancel - they must be set equal.
+- The transmit attenuator is analogue and therefore does not apply. The
+  loopback level is set by the digital scale alone.
+- A board left in loopback is deaf to its antennas and looks broken for no
+  visible reason. It survives everything short of a reboot, so put it back.
+
+It also proves nothing about the analogue radio. A clean result through
+loopback means the DSP is right and says nothing about the mixers, the
+amplifier, the baluns or the antennas.
 
 ## Behaviour worth knowing
 
