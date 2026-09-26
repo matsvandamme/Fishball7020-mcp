@@ -56,7 +56,9 @@ IQ file, unwritable capture dir) is reported as a file problem, not as
 
 **`sdr_sample_gpio` is not a transmit tool and is not gated.** It only flips a
 routing bit: the four bits the 12-bit DAC discards from each sample either
-reach four header pins (JP5 7/9/11/13, GPIO 978–981) or they do not. Nothing
+reach four header pins (JP5 7/9/11/13; sysfs GPIO 978–981 on the vendor's 5.15
+kernel, 584–587 on the 6.12 one, `gpiofind sample_gpio0` on both) or they do
+not. Nothing
 is emitted by turning it on — the pins move only while a buffer is streaming,
 and what they do is whatever is in the low nibble of those samples, OR-ed in
 **last** after any scaling. `sdr_sample_gpio_clock` authors such a pattern (and

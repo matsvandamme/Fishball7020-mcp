@@ -154,6 +154,28 @@ this server set. If levels do not match what was asked for, look there first.
 refuse the board. This server connects by URI and is unaffected, but
 `sdr_get_status` reports the serial so the problem is visible.
 
+**The board may be running either of two kernels, and this server does not care.**
+The devkit has a factory target on Linux 5.15 and a current one on **6.12 LTS**
+from Analog Devices. Everything this server speaks — IIOD on TCP 30431, the
+device and channel names, every `tx_*` safety attribute — is identical on both;
+the IIO attribute contract was diffed between them and differs by nine lines,
+none of which anything here reads. `cat /proc/version` on the board says which.
+
+One thing does differ, and it is the one place a hard-coded number would break:
+**the sysfs GPIO numbers moved.** The controller base is 906 on 5.15 and 512 on
+6.12, so `sample_gpio0` is 978 on one and 584 on the other. The libgpiod line
+number is 72 on both, because that is a property of the bitstream, and
+`gpiofind sample_gpio0` answers correctly on both. `sdr_sample_gpio` resolves it
+rather than assuming.
+
+**A debugfs `initialize` on a 5.15 board needs re-muting afterwards.** The
+kernel's unmute restores a cached attenuation, and on that kernel the cache lives
+in a struct the reset path `memset`s — so it comes back as 0 mdB, which is full
+output, the next time a transmit buffer opens. Measured on hardware. The devkit's
+`firmware-modern/patches/0019` fixes it; the factory kernel still has it. This
+server never pokes debugfs, but a human or another tool on the same board might,
+so `sdr_tx_status` after anything unusual is cheap.
+
 
 ## The RF-setup probe, and why it once lied
 
