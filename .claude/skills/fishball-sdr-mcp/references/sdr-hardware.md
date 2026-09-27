@@ -61,7 +61,11 @@ A calibration made below 4 GHz is wrong above it.
 
 ## IIOD protocol gotchas
 
-All confirmed against a live board running IIOD 0.25.
+All confirmed against a live board, on IIOD **0.25** (the pinned build the
+Buildroot rootfs carries) and again on **0.26** (what Debian ships). Nothing in
+this section differs between them; the cyclic path in particular is the same code
+— `git diff 38483f31 v0.26 -- local.c` is empty — and was re-confirmed on
+hardware.
 
 - **The channel mask is fixed-width**: exactly 8 hex characters per 32 scan
   channels. `00000003` enables channels 0 and 1; both `3` and
@@ -143,11 +147,20 @@ devkit restores the cache only if nothing has been set since the mute, so both
 orders work. This server sets gain after the stream regardless, which is correct
 either way.
 
-**Something on the board may be changing your gain.** `/mnt/jffs2` is persistent
-and `/mnt/jffs2/autorun.sh` runs at every boot, so a helper script there survives
-reflashing and appears nowhere in the firmware source. A common one applies a
-fixed gain a second or two after any stream starts, silently overriding whatever
-this server set. If levels do not match what was asked for, look there first.
+**Something on the board may be changing your gain — but only on one rootfs.**
+`/mnt/jffs2` is persistent and mounted on **both**, because it lives in QSPI and
+not on the SD card. On the **Buildroot** rootfs `/mnt/jffs2/autorun.sh` runs at
+every boot, so a helper script there survives reflashing and appears nowhere in
+the firmware source; a common one applies a fixed gain a second or two after any
+stream starts, silently overriding whatever this server set. If levels do not
+match what was asked for on that rootfs, look there first.
+
+On the **Debian** rootfs *nothing runs `autorun.sh`* — verified on the board, zero
+references anywhere in the filesystem. The file can sit there looking live and do
+nothing, which is the inverse trap: do not blame it, and do not expect a script
+you put there to run. The equivalent there is a systemd unit, so
+`systemctl list-units 'fishball*'` and `systemctl --failed` are the questions to
+ask instead. `grep ^ID= /etc/os-release` says which rootfs you are on.
 
 **Empty serials.** Firmware built before September 2026 reported an empty
 `hw_serial`, and tools that identify Plutos by serial — SDRangel among them —
@@ -164,9 +177,22 @@ none of which anything here reads. `cat /proc/version` on the board says which.
 One thing does differ, and it is the one place a hard-coded number would break:
 **the sysfs GPIO numbers moved.** The controller base is 906 on 5.15 and 512 on
 6.12, so `sample_gpio0` is 978 on one and 584 on the other. The libgpiod line
-number is 72 on both, because that is a property of the bitstream, and
-`gpiofind sample_gpio0` answers correctly on both. `sdr_sample_gpio` resolves it
-rather than assuming.
+number is 72 on both, because that is a property of the bitstream.
+
+**Do not reach for `gpiofind`.** It resolves the name correctly where it exists,
+but the Debian rootfs has **no libgpiod tools at all** — `gpiofind`, `gpioinfo`,
+`gpioget` and `gpiodetect` are all absent, checked on the board. What works on
+both is the sysfs walk by label:
+
+```sh
+# run on the board - find the controller, then add line 72
+for c in /sys/class/gpio/gpiochip*; do
+    grep -q zynq "$c/label" 2>/dev/null && echo $(( $(cat "$c/base") + 72 ))
+done
+```
+
+`sdr_sample_gpio` resolves it through IIO rather than either route, so it is
+unaffected.
 
 **A debugfs `initialize` on a 5.15 board needs re-muting afterwards.** The
 kernel's unmute restores a cached attenuation, and on that kernel the cache lives
