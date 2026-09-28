@@ -132,10 +132,16 @@ inputs 2 and 3 - so the moment decimation engages, channel 1 is sampled at one
 eighth the rate with **no anti-alias filter of its own**. Measured on the board:
 stock channel 1 is flat at +1.4 dB right across a 0.2-20 MHz sweep (no
 attenuation at all), and a 10 MHz tone at 7.68 MSPS arrives as a tall alias at
-+2.32 MHz. The devkit's `optional/0004` patch filters both channels and takes it
-to about -70 dB beyond 5 MHz. So: engaging the filter is safe on patched
-firmware, and quietly corrupts channel 1 on stock. If a caller asks for both
-channels with the filter on, say which firmware that needs.
++2.32 MHz.
+
+The devkit's patch `0021` filters both channels and takes that to about -70 dB
+beyond 5 MHz. **It is applied by default**, so a bitstream built from the devkit
+today is safe here; it was `optional/0004` until it was promoted, and the opt-out
+`STOCK_RX_FILTER=1` reproduces upstream's channel-0-only wiring for anyone who
+wants it. So: engaging the filter is safe on a default devkit build, and quietly
+corrupts channel 1 on factory firmware and on a `STOCK_RX_FILTER=1` build. If a
+caller asks for both channels with the filter on, say which firmware that needs
+rather than assuming.
 
 **Never return raw IQ inline.** Even a short capture is megabytes. Write to
 `SDR_MCP_CAPTURE_DIR` and return the path plus statistics.

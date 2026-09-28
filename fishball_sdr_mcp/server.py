@@ -392,12 +392,20 @@ def sdr_configure_rx(
     title="Engage or bypass the FPGA channel filter",
     description=(
         "Switch the FPGA's decimate-by-8 channel filter into or out of the receive "
-        "path.\n\n"
-        "On firmware built from this devkit's channelizer patch, engaging it selects a "
-        "sharp FIR that removes everything outside the wanted channel, and drops the "
-        "delivered rate to one eighth of the converter rate. It works by writing the "
-        "cf-ad9361-lpc sample rate, which is what drives GP_CONTROL bit 0 and the "
-        "bypass mux in the bitstream - there is no separate on/off attribute.\n\n"
+        "path. Engaging it drops the delivered rate to one eighth of the converter "
+        "rate. It works by writing the cf-ad9361-lpc sample rate, which is what "
+        "drives GP_CONTROL bit 0 and the bypass mux in the bitstream - there is no "
+        "separate on/off attribute.\n\n"
+        "WHICH RECEIVE CHANNELS IT FILTERS DEPENDS ON THE BITSTREAM, and this "
+        "matters if you are using RX2. Stock/factory firmware, and a devkit build "
+        "made with STOCK_RX_FILTER=1, filter channel 0 only: channel 1 goes straight "
+        "to cpack and is then sampled at one eighth the rate with no anti-alias "
+        "filter of its own, so engaging this aliases RX2 by about 70 dB. Devkit "
+        "builds since patch 0021 - the default - filter both channels. Read "
+        "sdr_get_status first if you do not know which bitstream is loaded, and say "
+        "which firmware you are assuming when you report a two-channel result.\n\n"
+        "The devkit's optional channelizer patch swaps the decimator's coefficients "
+        "for a sharp 321-tap FIR; the tool is the same either way.\n\n"
         "Bypassing is the way to A/B whether the filter is really doing anything: a "
         "neighbouring signal that reappears when bypassed is the proof."),
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False,
