@@ -1,7 +1,8 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/img/vmat-logo-dark.png">
-    <img src="docs/img/vmat-logo.png" alt="VMAT" width="110">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/img/covers/mcp-prompt-dark.png">
+    <img src="docs/img/covers/mcp-prompt-light.png"
+         alt="Ask the spectrum a question — 21 MCP tools that tune, scan, measure, capture IQ as SigMF and transmit, driving a PlutoSky R1 over libiio. Shows a prompt asking what is on the air around 433 MHz and the scanned spectrum returned.">
   </picture>
 </p>
 
