@@ -67,6 +67,21 @@ this section differs between them; the cyclic path in particular is the same cod
 — `git diff 38483f31 v0.26 -- local.c` is empty — and was re-confirmed on
 hardware.
 
+**Both are now pinned, which is why that claim keeps holding.** The Buildroot
+build always was. On the Debian target, `apt` was free to move libiio under the
+board until 2026-09-28, when the devkit pinned it:
+
+    Package: src:libiio
+    Pin: version 0.26-2
+    Pin-Priority: 1001
+
+covering `iiod`, `libiio0` and `libiio-utils`. That matters here specifically:
+libiio probes `BLOCK_FREE_IOCTL` to decide whether the high-speed cyclic path is
+available and falls back to `read()/write()` **silently** when it is not, so a
+version bump could break every transmit tool in this server with no error
+message. Verified on the board: priority 1001 against an unpinned control at
+500, and `apt-get -s dist-upgrade` moves nothing.
+
 - **The channel mask is fixed-width**: exactly 8 hex characters per 32 scan
   channels. `00000003` enables channels 0 and 1; both `3` and
   `0000000000000003` fail with `-22 EINVAL` and no hint.
