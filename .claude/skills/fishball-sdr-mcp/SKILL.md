@@ -87,6 +87,16 @@ the stream is overwritten. Every streaming path here writes the gain after
 (`cyclic=false`) buffer, which has already finished by then, so it sets the
 gain first (patch 0005 keeps it) and calls `tx_disable()` after it plays out.
 
+**A cyclic transmit this server starts is bounded at 60 s, by the board.** The
+devkit rootfs arms `tx_cyclic_timeout_ms` at boot from `fishball-rf-quiesce`, before
+`iiod` starts — the kernel's own default is still `0`, off. So a cyclic buffer that
+outlives this server, or whose client vanishes, mutes itself after a minute rather
+than repeating forever in hardware. Two consequences for anything written here: do
+not tell a user a cyclic transmit runs indefinitely on this board, and if a carrier
+this server started disappears after about a minute, that is the backstop, not a
+fault. `fw_setenv tx_cyclic_bound <ms>` changes it and `0` disables it, from the next
+boot; it is a separate switch from `tx_quiesce`.
+
 **Tool calls are serialised.** The SDK runs each `tools/call` in its own worker
 thread, so without a lock a client batching `sdr_spectrum` and `sdr_tx_tone`
 would interleave multi-step radio sequences. `_serialized` in `server.py`
