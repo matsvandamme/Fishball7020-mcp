@@ -68,6 +68,7 @@ The board's firmware and FPGA build system live in a companion repository,
 | understand why a capture is int16 and what full scale is | [Three design decisions](#three-design-decisions-worth-knowing) |
 | run the tests | [Testing](#testing) |
 | know what this board actually measures like | [Notes from the hardware](#notes-from-the-hardware) |
+| drive this board from MATLAB or Simulink instead | the devkit's [MATLAB guide](https://github.com/matsvandamme/fishball7020-fpga-devkit/blob/main/docs/matlab.md) and its [Simulink blocks](https://github.com/matsvandamme/fishball7020-fpga-devkit/tree/main/examples/matlab/06-simulink) |
 | change the firmware itself, not just drive it | the sibling [fishball7020-fpga-devkit](https://github.com/matsvandamme/fishball7020-fpga-devkit) |
 
 ## Quick start
@@ -401,6 +402,27 @@ needed. It overrides this server's gain silently, and on a board with the
 PGA-102+ power amplifier the 10 dB such scripts typically use is about +13 dBm
 at the SMA against a +2.5 dBm receive port. The devkit's
 `tools/selftest/sdr_selftest.py --ssh` lists what is there.
+
+**A retune is not visible in the samples until the buffer is rebuilt.** This
+server is unaffected, and the reason is worth knowing before anyone changes it:
+every capture here does its own `OPEN`, reads, and closes, so each one starts a
+fresh buffer at the current settings. Hold a buffer open across a retune instead
+and the old samples come out first — measured over USB on the devkit's
+long-lived `iio_readdev` stream at 2.304 MSPS in 4096-sample frames, a
+commanded 500 kHz retune left the tone at the **old** offset for thirty-four
+more frames and only moved on the thirty-fifth, with `altvoltage0 frequency`
+reading the new value the whole time. **Reading the register back is not
+evidence the retune reached your samples.** pyadi-iio's `rx_destroy_buffer()`
+exists for this.
+
+**Receive `rf_port_select` accepts only `A_BALANCED`.** The chip advertises
+twelve in `rf_port_select_available` — A/B/C balanced, the six single-ended
+halves, and `TX_MONITOR1/2`, which would point the receiver at the board's own
+transmitter with no cable — and this firmware refuses every one of them but
+`A_BALANCED` with `Invalid argument (22)`, from an idle ENSM state as readily as
+from a running one. `filter_fir_en 1` is refused the same way until coefficients
+are loaded through `filter_fir_config`. Neither is used by this server; they are
+recorded because `_available` reads like a menu and is not one.
 
 **The transmitter idles hot on stock firmware.** The AD9361 comes up in ENSM
 `fdd` with the synthesiser running and 10 dB of attenuation, so the TX port
