@@ -138,6 +138,28 @@ not merely lose samples - it silently mutes the transmitter mid-stream, and the
 client sees no error. This is the same conclusion as "buffer duration is the
 defence" in `references/sdr-hardware.md`, with a number on it.
 
+**Every power-on transmits, and nothing in software can stop it.** Measured
+2026-09-29 with a second receiver cabled to each transmit port through a pad: about
+**1 second after power is applied, both TX1A and TX2A emit a narrowband burst of
+~4 ms at the TX LO frequency**, at least +8 dBm at the SMA (a lower bound - it clipped
+the receiver), reproducible to 0.4 dB across power cycles and within 0.3 dB between the
+two ports.
+
+It is the AD9361's own **TX quadrature calibration**: `ad9361_tx_quad_calib()` drives an
+NCO tone through the transmit path to correct I/Q imbalance, and it runs *before*
+`ad9361_set_tx_atten()` applies the device tree's attenuation. Transmitting is the
+mechanism, not a bug - the function aborts if the TX LO is powered down - so there is
+no fix and no knob. What makes it loud on this board is the PGA-102+ on transmit.
+
+Consequences for anything this server says about safety:
+
+- Never tell a user the transmitter is silent "from power-on". It is silent from the
+  moment `ad9361_setup()` finishes, which is after the calibration.
+- If an antenna is on a transmit port, **plugging the board in radiates**. Negligible
+  duty cycle in the ISM band, but say it rather than implying otherwise.
+- `tx_quiesce`, any affirmation gate and the starve watchdog are all far too late to
+  affect this. Do not cite them as covering the boot window.
+
 **Mute BEFORE closing a TX buffer, never after.** The kernel's stream-stop hook
 snapshots whatever attenuation it finds into a cache and then applies maximum; the
 next buffer enable - by *any* program, with no affirmation asked for - restores
