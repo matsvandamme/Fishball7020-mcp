@@ -141,9 +141,15 @@ defence" in `references/sdr-hardware.md`, with a number on it.
 **Every power-on transmits, and nothing in software can stop it.** Measured
 2026-09-29 with a second receiver cabled to each transmit port through a pad: about
 **1 second after power is applied, both TX1A and TX2A emit a narrowband burst of
-~4 ms at the TX LO frequency**, at least +8 dBm at the SMA (a lower bound - it clipped
-the receiver), reproducible to 0.4 dB across power cycles and within 0.3 dB between the
-two ports.
+~4 ms at the TX LO frequency**, on both ports, every power cycle.
+
+**How strong is not known.** An earlier version of this file said "+8 dBm, reproducible
+to 0.4 dB, within 0.3 dB between the ports". Those numbers are withdrawn: the receiver
+was saturated, so every reading was the clip ceiling rather than a level. The test that
+showed it - a synthetic tone fed in at x2 and at x100 read the same -4.39 dBFS - also
+explains the agreement, which was two saturated readings agreeing rather than a
+reproducible measurement. What the capture supports is that the burst is present on both
+ports at or above the equivalent of -20 dB attenuation, and unbounded above.
 
 It is the AD9361's own **TX quadrature calibration**: `ad9361_tx_quad_calib()` drives an
 NCO tone through the transmit path to correct I/Q imbalance, and it runs *before*

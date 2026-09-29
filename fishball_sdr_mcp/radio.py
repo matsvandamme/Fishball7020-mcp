@@ -537,13 +537,41 @@ class Radio:
         which documents the same ordering for the same reason.
 
         Tolerant on purpose: it is on the path of the off switch, so it does what
-        it can. The callers that need a VERIFIED mute do their own read-back.
+        it can, and the close that follows must happen even if the write did not.
+        It proves nothing on its own - use `_mute_and_verify` for a mute that is
+        reported to a caller.
         """
         for ch in ("voltage0", "voltage1"):
             try:
                 self.write(PHY, ch, "hardwaregain", TX_ATTEN_MAX_DB, output=True)
             except Exception:
                 pass
+
+    def _mute_and_verify(self, ch: str, stopped: list, failed: list) -> None:
+        """Mute one transmit channel, then READ IT BACK before saying so.
+
+        A write that returned is not a mute. This is the off switch's report,
+        and the devkit's own harnesses were caught reporting "both channels
+        muted" on the strength of a write alone - which is a silently live port
+        wearing a success message. So: write, read back, compare, and put the
+        measured value in the report either way.
+        """
+        try:
+            self.write(PHY, ch, "hardwaregain", TX_ATTEN_MAX_DB, output=True)
+        except Exception as exc:
+            failed.append(f"TX {ch} attenuation: {errors.describe(exc)}")
+            return
+        try:
+            got = float(str(self.read(PHY, ch, "hardwaregain", output=True)).split()[0])
+        except Exception as exc:
+            failed.append(f"TX {ch} muted but UNVERIFIABLE ({errors.describe(exc)}) "
+                          f"- treat that port as live")
+            return
+        if abs(got - TX_ATTEN_MAX_DB) > 0.26:
+            failed.append(f"TX {ch} WOULD NOT MUTE: reads {got} dB, asked "
+                          f"{TX_ATTEN_MAX_DB} dB - TREAT THAT PORT AS LIVE")
+        else:
+            stopped.append(f"TX {ch} attenuated to {got} dB (read back)")
 
     def tx_disable(self) -> dict:
         """Silence everything: DDS tones off, any buffer closed, TX LO down.
@@ -571,11 +599,7 @@ class Radio:
         # Maximum attenuation, then stop the synthesiser. Order matters: turn
         # the signal down before turning the oscillator off, not after.
         for ch in ("voltage0", "voltage1"):
-            try:
-                self.write(PHY, ch, "hardwaregain", TX_ATTEN_MAX_DB, output=True)
-                stopped.append(f"TX {ch} attenuated to {TX_ATTEN_MAX_DB} dB")
-            except Exception as exc:
-                failed.append(f"TX {ch} attenuation: {errors.describe(exc)}")
+            self._mute_and_verify(ch, stopped, failed)
         try:
             self.write(PHY, TX_LO, "powerdown", 1, output=True)
             stopped.append("TX LO powered down")
@@ -607,12 +631,10 @@ class Radio:
         # because that is an explicit request to stop.
         stopped, failed = [], []
         for ch in ("voltage0", "voltage1"):
-            try:
-                self.write(PHY, ch, "hardwaregain", TX_ATTEN_MAX_DB, output=True)
-                stopped.append(f"TX {ch} attenuated to {TX_ATTEN_MAX_DB} dB")
-            except Exception as exc:
-                failed.append(f"TX {ch}: {errors.describe(exc)}")
-        return {"stopped": stopped, "failed": failed} if stopped else None
+            self._mute_and_verify(ch, stopped, failed)
+        # `failed` alone is enough to report: a quiesce that could not verify a
+        # mute has to be visible even when the other channel went quiet.
+        return {"stopped": stopped, "failed": failed} if (stopped or failed) else None
 
     def probe_loopback(self, channel_pair: int = 0, rx_pair: int | None = None) -> float:
         """Transmit a brief minimum-power tone; return how far above the noise

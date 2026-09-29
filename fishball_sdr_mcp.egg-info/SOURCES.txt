@@ -8,6 +8,7 @@ fishball_sdr_mcp/formatting.py
 fishball_sdr_mcp/iiod.py
 fishball_sdr_mcp/radio.py
 fishball_sdr_mcp/server.py
+fishball_sdr_mcp/sigmf.py
 fishball_sdr_mcp.egg-info/PKG-INFO
 fishball_sdr_mcp.egg-info/SOURCES.txt
 fishball_sdr_mcp.egg-info/dependency_links.txt
