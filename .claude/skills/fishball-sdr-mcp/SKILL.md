@@ -97,6 +97,20 @@ this server started disappears after about a minute, that is the backstop, not a
 fault. `fw_setenv tx_cyclic_bound <ms>` changes it and `0` disables it, from the next
 boot; it is a separate switch from `tx_quiesce`.
 
+**If a second receiver is used to check this board, three measurement traps.** All
+three produced a confident wrong answer on the devkit bench on 2026-09-30, and any of
+them can turn up in an answer this server helps write.
+
+- **A HackRF's own 25 MHz reference comb puts a spur on exactly 2400.000 MHz** (96 x
+  25 MHz), 8 dB over its floor with nothing connected. That is the frequency this board
+  is usually tuned to. Separate them by sweeping the transmit attenuator - a real
+  emission tracks it - by retuning the receive LO, and by taking one capture with the
+  receiver's input open.
+- **A stream of zeros is not an RF signal.** I = 0, Q = 0 emits nothing but residual
+  leakage, so a zero-fed buffer cannot serve as a positive control. Use a real tone.
+- **The peak of ONE FFT of noise sits 8-16 dB above the median**, which reads exactly
+  like a carrier. Average before believing a peak, and say how many FFTs went into it.
+
 **Tool calls are serialised.** The SDK runs each `tools/call` in its own worker
 thread, so without a lock a client batching `sdr_spectrum` and `sdr_tx_tone`
 would interleave multi-step radio sequences. `_serialized` in `server.py`
