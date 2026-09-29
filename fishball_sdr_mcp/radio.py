@@ -521,6 +521,30 @@ class Radio:
                     pass
         return driven
 
+    def _mute_before_close(self) -> None:
+        """Maximum attenuation on both transmit ports. Call BEFORE closing a buffer.
+
+        The kernel's stream-stop hook snapshots whatever attenuation it finds
+        into a cache and then applies maximum. The next buffer enable - by ANY
+        program, with no affirmation asked for - restores what was snapshotted.
+        So closing the buffer first hands that cache this stream's LOUD value,
+        and the next thing to open a buffer inherits it.
+
+        Measured on the devkit bench, not theorised: a bare buffer enable on a
+        board reading -89.750000 dB came up at -61.500000 dB, a 28.25 dB raise
+        nobody asked for, because the previous run had torn its buffer down
+        before muting. See IDLE-CASES.md in the devkit, and tx-guard.sh's `reap`,
+        which documents the same ordering for the same reason.
+
+        Tolerant on purpose: it is on the path of the off switch, so it does what
+        it can. The callers that need a VERIFIED mute do their own read-back.
+        """
+        for ch in ("voltage0", "voltage1"):
+            try:
+                self.write(PHY, ch, "hardwaregain", TX_ATTEN_MAX_DB, output=True)
+            except Exception:
+                pass
+
     def tx_disable(self) -> dict:
         """Silence everything: DDS tones off, any buffer closed, TX LO down.
 
@@ -530,8 +554,11 @@ class Radio:
         stopped, failed = [], []
         try:
             did = self.device_id(TX)
+            # Before the close, or the kernel caches this stream's gain and the
+            # next buffer enable restores it. See _mute_before_close.
+            self._mute_before_close()
             self._retry(lambda c: (c.close_buffer(did), None)[1])
-            stopped.append("buffer closed")
+            stopped.append("muted, then buffer closed")
         except Exception as exc:
             failed.append(f"buffer: {errors.describe(exc)}")
         for ch in self.dds_channels():
@@ -690,6 +717,7 @@ class Radio:
     def stop_buffer(self) -> None:
         """Close any running sample buffer and mark it inactive."""
         did = self.device_id(TX)
+        self._mute_before_close()       # ordering is load-bearing; see the helper
         self._retry(lambda c: (c.close_buffer(did), None)[1])
         if self.tx_state.get("kind") != "dds":
             self.tx_state = {"active": False}
@@ -824,6 +852,7 @@ class Radio:
         # A cyclic buffer left running makes the next OPEN fail with EBUSY, so
         # replace rather than refuse: transmitting again is a perfectly
         # reasonable thing to ask for, and the error was unhelpful.
+        self._mute_before_close()       # ordering is load-bearing; see the helper
         self._retry(lambda c: (c.close_buffer(did), None)[1])
         dev = self.devices()[TX]
         total = len(dev.scan_channels())
@@ -857,6 +886,7 @@ class Radio:
                 time.sleep(min(len(values) / max(len(chans), 2) / rate + 0.05, 10.0))
             except Exception:
                 time.sleep(0.5)
+            self._mute_before_close()   # ordering is load-bearing; see the helper
             self._retry(lambda c: (c.close_buffer(did), None)[1])
             self.tx_state["active"] = False
         return written

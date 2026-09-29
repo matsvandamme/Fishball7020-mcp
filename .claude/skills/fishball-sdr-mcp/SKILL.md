@@ -115,6 +115,38 @@ Stock firmware has none of this. Do not promise it without checking:
 cat /sys/bus/iio/devices/iio:device2/tx_starve_timeout_ms   # absent on stock
 ```
 
+**Two limits on that watchdog, both measured on the bench 2026-09-29.**
+
+*It does not re-arm.* Once it has fired, the driver believes the transmitter is
+muted, and data resuming does not change that - only a fresh buffer enable does.
+So after a starve-mute, a gain write raises the attenuator and **nothing
+re-mutes it**, not even stream stop:
+
+```
+atten0=-30.000000  LO_pd=1  buf=1      (gain written AFTER the watchdog fired)
+```
+
+What keeps that silent is the powered-down TX LO, not the attenuator. Do not read
+a loud `hardwaregain` as "transmitting" or a quiet one as "safe" without also
+reading `out_altvoltage1_TX_LO_powerdown`.
+
+*A stream must be fed to be protected by it, and the host link may not manage
+that.* Direct from a host over Ethernet at 3.072 MSPS with 256 K-sample buffers:
+5 underflows and **one starve mute in 10 s**, with nothing wrong. The same test
+on the board over loopback: 2 underflows, **no** starve mute. So a slow link does
+not merely lose samples - it silently mutes the transmitter mid-stream, and the
+client sees no error. This is the same conclusion as "buffer duration is the
+defence" in `references/sdr-hardware.md`, with a number on it.
+
+**Mute BEFORE closing a TX buffer, never after.** The kernel's stream-stop hook
+snapshots whatever attenuation it finds into a cache and then applies maximum; the
+next buffer enable - by *any* program, with no affirmation asked for - restores
+what was snapshotted. Measured: a bare buffer enable on a board reading
+`-89.750000` came up at **`-61.500000`**, a 28.25 dB raise nobody asked for,
+because the previous run tore its buffer down before muting. `radio.py`'s
+`_mute_before_close()` exists for this and is called at every close site. If you
+add another, call it.
+
 **Both transmit chains are reachable.** `sdr_tx_tone`, `sdr_transmit_iq` and
 `sdr_transmit_waveform` take `channel` = `"0"` (TX1), `"1"` (TX2) or `"both"`,
 which is the default.
