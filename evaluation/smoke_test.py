@@ -201,13 +201,20 @@ def main() -> int:
             check("closed server's instructions say transmitting is disabled",
                   "DISABLED" in instr, instr[:60])
             for name, arguments in (
-                    ("sdr_tx_tone", {"lo_hz": 2_400_000_000}),
+                    ("sdr_tx_tone", {"lo_hz": 2_400_000_000, "channel": "0"}),
                     ("sdr_transmit_iq", {"path": "/nonexistent.iq16",
-                                         "lo_hz": 2_400_000_000}),
-                    ("sdr_transmit_waveform", {"lo_hz": 2_400_000_000})):
+                                         "lo_hz": 2_400_000_000, "channel": "0"}),
+                    ("sdr_transmit_waveform", {"lo_hz": 2_400_000_000, "channel": "0"})):
                 body = text_of(closed.call(name, arguments))
                 refused = "SDR_MCP_ALLOW_TX" in body
                 check(f"{name} refuses when the gate is closed", refused,
+                      body.splitlines()[0][:60] if body else "empty")
+                # channel is required: without it the call must not get as far
+                # as the radio. Safe to try here - this server cannot transmit.
+                no_ch = {k: v for k, v in arguments.items() if k != "channel"}
+                body = text_of(closed.call(name, no_ch))
+                check(f"{name} refuses a call that names no channel",
+                      "channel" in body.lower() and "Transmitting" not in body,
                       body.splitlines()[0][:60] if body else "empty")
             # The two paths that stream a buffer WITHOUT being ordinary
             # transmit tools. Both once bypassed the gate; neither may now.

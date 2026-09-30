@@ -272,7 +272,12 @@ The board has two independent transmit chains, TX1 and TX2. `sdr_tx_tone`,
 |---|---|
 | `"0"` | TX1 |
 | `"1"` | TX2 |
-| `"both"` *(default)* | both ports, the same waveform on each |
+| `"both"` | both ports, the same waveform on each |
+
+**There is no default** (since 2026-09-30; it used to be `"both"`): a transmit call
+must name the port it keys, and one that does not is refused before the radio is
+touched. A default drives a port nobody named — the same defect the devkit's
+`tone.py` had, fixed the same way.
 
 ### The safety gate: bands, power, and overrides
 

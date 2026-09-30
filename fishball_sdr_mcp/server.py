@@ -1051,6 +1051,11 @@ def sdr_tx_disable(response_format: Format = "markdown") -> str:
 def sdr_tx_tone(
     lo_hz: Annotated[int, Field(ge=70_000_000, le=6_000_000_000,
                                 description="TX local oscillator in Hz")],
+    channel: Annotated[Literal["0", "1", "both"], Field(
+        description="REQUIRED - name the port you are about to key: channel 0 "
+                    "(TX1), channel 1 (TX2), or both (the same waveform out of "
+                    "each). No default, on purpose: a default keys a port nobody "
+                    "named, which is how an antenna port gets driven by accident.")],
     tone_offset_hz: Annotated[float, Field(
         description="Tone offset from the LO, in Hz")] = 100_000.0,
     scale: Annotated[float, Field(ge=0.0, le=1.0,
@@ -1059,9 +1064,6 @@ def sdr_tx_tone(
         ge=-89.75, le=0.0,
         description="TX attenuation in dB; 0 is full output. Must be set, "
                     "because the firmware idles at maximum attenuation.")] = -30.0,
-    channel: Annotated[Literal["0", "1", "both"], Field(
-        description="Which transmit port: channel 0 (TX1), channel 1 (TX2), "
-                    "or both.")] = "both",
     override_reason: Annotated[str | None, Field(
         description="Only for a transmit the safety gate refuses (outside the "
                     "EU licence-free bands, or over their power limit): say why "
@@ -1131,6 +1133,11 @@ def sdr_transmit_iq(
     path: Annotated[str, Field(description="Path to the IQ file")],
     lo_hz: Annotated[int, Field(ge=70_000_000, le=6_000_000_000,
                                 description="TX local oscillator in Hz")],
+    channel: Annotated[Literal["0", "1", "both"], Field(
+        description="REQUIRED - name the port you are about to key: channel 0 "
+                    "(TX1), channel 1 (TX2), or both (the same waveform out of "
+                    "each). No default, on purpose: a default keys a port nobody "
+                    "named, which is how an antenna port gets driven by accident.")],
     sample_rate_hz: Annotated[int | None, Field(
         default=None, ge=520_000, le=61_440_000,
         description="TX sample rate; leave unset to keep the current one")] = None,
@@ -1145,9 +1152,6 @@ def sdr_transmit_iq(
         description="TX attenuation in dB; 0 is full output. Must be set, "
                     "because the firmware idles at maximum attenuation.")] = -30.0,
     max_samples: Annotated[int, Field(ge=256, le=1_048_576)] = 1_048_576,
-    channel: Annotated[Literal["0", "1", "both"], Field(
-        description="Which transmit port: channel 0 (TX1), channel 1 (TX2), or "
-                    "both, which sends the same waveform out of each.")] = "both",
     override_reason: Annotated[str | None, Field(
         description="Only for a transmit the safety gate refuses (outside the "
                     "EU licence-free bands, or over their power limit): say why "
@@ -1259,6 +1263,11 @@ def sdr_transmit_iq(
 @_serialized
 def sdr_transmit_waveform(
     lo_hz: Annotated[int, Field(ge=70_000_000, le=6_000_000_000)],
+    channel: Annotated[Literal["0", "1", "both"], Field(
+        description="REQUIRED - name the port you are about to key: channel 0 "
+                    "(TX1), channel 1 (TX2), or both (the same waveform out of "
+                    "each). No default, on purpose: a default keys a port nobody "
+                    "named, which is how an antenna port gets driven by accident.")],
     shape: Annotated[Literal["tone", "two_tone", "chirp", "noise"],
                      Field(description="Waveform to generate")] = "tone",
     bandwidth_hz: Annotated[float, Field(
@@ -1269,9 +1278,6 @@ def sdr_transmit_waveform(
         ge=-89.75, le=0.0,
         description="TX attenuation in dB; 0 is full output. Must be set, "
                     "because the firmware idles at maximum attenuation.")] = -30.0,
-    channel: Annotated[Literal["0", "1", "both"], Field(
-        description="Which transmit port: channel 0 (TX1), channel 1 (TX2), or "
-                    "both, which sends the same waveform out of each.")] = "both",
     override_reason: Annotated[str | None, Field(
         description="Only for a transmit the safety gate refuses (outside the "
                     "EU licence-free bands, or over their power limit): say why "

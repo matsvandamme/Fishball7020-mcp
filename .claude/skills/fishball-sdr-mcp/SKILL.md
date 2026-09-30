@@ -216,7 +216,9 @@ add another, call it.
 
 **Both transmit chains are reachable.** `sdr_tx_tone`, `sdr_transmit_iq` and
 `sdr_transmit_waveform` take `channel` = `"0"` (TX1), `"1"` (TX2) or `"both"`,
-which is the default.
+and it is **REQUIRED** - no default since 2026-09-30 (it was `"both"`). Name the
+port you mean to key; ask the operator which port is terminated if you do not
+know. Never pass `"both"` just to make a call go through.
 
 **This board can destroy its own receiver.** It ships in a variant with a
 Mini-Circuits PGA-102+ power amplifier and reaches about **+19 dBm**, against a

@@ -589,6 +589,24 @@ class TestAdvertisedToolsMatchTheList(unittest.TestCase):
         self.assertEqual(registered, smoke_test.EXPECTED_TOOLS)
 
 
+class TestTransmitChannelIsRequired(unittest.TestCase):
+    """A transmit tool must be told which port to key.
+
+    It defaulted to "both", which drives TX1 AND TX2 when a caller names neither -
+    the same defect tools/tx-idle-cases/tone.py had in the devkit, fixed there by
+    making the channel required. Decided 2026-09-30: the same here. The advertised
+    schema is checked, since that is what a client sees.
+    """
+
+    def test_every_transmit_tool_requires_channel(self):
+        tools = {t.name: t for t in server.server._tool_manager.list_tools()}
+        for name in ("sdr_tx_tone", "sdr_transmit_iq", "sdr_transmit_waveform"):
+            with self.subTest(tool=name):
+                schema = tools[name].parameters
+                self.assertIn("channel", schema.get("required", []))
+                self.assertNotIn("default", schema["properties"]["channel"])
+
+
 class TestSkillFrontmatterParses(unittest.TestCase):
     """SKILL.md's YAML frontmatter must parse, and it silently did not.
 
