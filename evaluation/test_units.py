@@ -643,5 +643,107 @@ _to_dac = server._to_dac
 _load_iq = server._load_iq
 
 
+class TestTxSafetyGate(unittest.TestCase):
+    """The band and power rules, and how an override is decided. TypeSafe is
+    mocked: these must pass offline, and must not spend API calls."""
+
+    def setUp(self):
+        from fishball_sdr_mcp import txgate
+        self.g = txgate
+        patcher = mock.patch.dict(os.environ, {}, clear=False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        os.environ.pop("TYPESAFE_API_KEY", None)
+
+    def test_in_band_low_power_passes(self):
+        self.assertTrue(self.g.check("x", 433.92e6, 433.92e6, -30, 0.5, None).allowed)
+
+    def test_span_leaving_the_band_is_flagged(self):
+        # 433.92 MHz +/- 1 MHz runs past 434.79 MHz.
+        self.assertFalse(self.g.check("x", 432.92e6, 434.92e6, -30, 0.5, None).allowed)
+
+    def test_over_band_power_is_flagged(self):
+        d = self.g.check("x", 433.92e6, 433.92e6, 0, 1.0, None)
+        self.assertFalse(d.allowed)
+        self.assertIn("+10 dBm", d.message)
+
+    def test_power_estimate(self):
+        self.assertAlmostEqual(self.g.estimate_dbm(-10, 0.5), 19 - 10 - 6.0206, places=3)
+        self.assertEqual(self.g.estimate_dbm(0, 0), -math.inf)
+
+    def test_fm_band_refused_without_override(self):
+        self.assertFalse(self.g.check("x", 100e6, 100e6, -30, 0.5, None).allowed)
+        self.assertFalse(self.g.check("x", 100e6, 100e6, -30, 0.5, "   ").allowed)
+
+    def test_override_without_key_is_taken_unchecked(self):
+        d = self.g.check("x", 100e6, 100e6, -30, 0.5, "cabled")
+        self.assertTrue(d.allowed)
+        self.assertIn("UNCHECKED", d.log_line)
+
+    def test_override_with_key_follows_typesafe(self):
+        os.environ["TYPESAFE_API_KEY"] = "k"
+        cases = [  # (answers, accepted)
+            (dict(conducted=0.97, shielded=0.0, licensed=0.0, radiates=0.02), True),
+            (dict(conducted=0.97, shielded=0.0, licensed=0.0, radiates=0.9), False),
+            (dict(conducted=0.1, shielded=0.95, licensed=0.0, radiates=0.1), True),
+            (dict(conducted=0.0, shielded=0.0, licensed=0.9, radiates=0.9), True),
+            (dict(conducted=0.03, shielded=0.01, licensed=0.02, radiates=0.4), False),
+        ]
+        for answers, accepted in cases:
+            reply = {"model": "jev-test",
+                     "answers": {k: {"type": "noul", "noul": v} for k, v in answers.items()}}
+            resp = mock.MagicMock()
+            resp.__enter__.return_value.read.return_value = json.dumps(reply).encode()
+            with mock.patch("urllib.request.urlopen", return_value=resp) as urlopen:
+                d = self.g.check("x", 100e6, 100e6, -30, 0.5, "some reason")
+            self.assertEqual(d.allowed, accepted, answers)
+            req = urlopen.call_args[0][0]
+            self.assertEqual(json.loads(req.data)["state"]["override_reason"], "some reason")
+            self.assertEqual(req.get_header("Authorization"), "Bearer k")
+
+    def test_typesafe_unreachable_refuses(self):
+        import urllib.error
+        os.environ["TYPESAFE_API_KEY"] = "k"
+        with mock.patch("urllib.request.urlopen",
+                        side_effect=urllib.error.URLError("down")):
+            d = self.g.check("x", 100e6, 100e6, -30, 0.5, "cabled into a load")
+        self.assertFalse(d.allowed)
+        self.assertIn("service failure", d.message)
+
+    def test_force_overrules_without_a_reason(self):
+        d = self.g.check("x", 100e6, 100e6, -30, 0.5, None, force=True)
+        self.assertTrue(d.allowed)
+        self.assertTrue(d.message.startswith("WARNING"))
+        self.assertIn("FORCED", d.log_line)
+
+    def test_force_overrules_a_typesafe_rejection_and_an_outage(self):
+        import urllib.error
+        os.environ["TYPESAFE_API_KEY"] = "k"
+        reply = {"model": "jev-test", "answers": {
+            k: {"type": "noul", "noul": 0.02} for k in
+            ("conducted", "shielded", "licensed", "radiates")}}
+        resp = mock.MagicMock()
+        resp.__enter__.return_value.read.return_value = json.dumps(reply).encode()
+        with mock.patch("urllib.request.urlopen", return_value=resp):
+            d = self.g.check("x", 100e6, 100e6, -30, 0.5, "because", force=True)
+        self.assertTrue(d.allowed)
+        self.assertIn("REJECTED", d.log_line)          # the verdict is still recorded
+        with mock.patch("urllib.request.urlopen",
+                        side_effect=urllib.error.URLError("down")):
+            self.assertTrue(self.g.check("x", 100e6, 100e6, -30, 0.5, "because",
+                                         force=True).allowed)
+
+    def test_force_changes_nothing_in_band(self):
+        d = self.g.check("x", 433.92e6, 433.92e6, -30, 0.5, None, force=True)
+        self.assertTrue(d.allowed)
+        self.assertEqual(d.message, "")
+
+    def test_in_band_never_calls_typesafe(self):
+        os.environ["TYPESAFE_API_KEY"] = "k"
+        with mock.patch("urllib.request.urlopen") as urlopen:
+            self.g.check("x", 868e6, 868e6, -40, 0.5, "whatever")
+        urlopen.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

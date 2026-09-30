@@ -51,6 +51,31 @@ detector — and reports only what it can actually establish.
 cannot leave the board transmitting a cyclic buffer. `SDR_MCP_TX_BANDS` can
 restrict transmission to named ranges on top of the gate.
 
+### The safety gate (`txgate.py`)
+
+A second layer, advisory rather than a switch. Before a tone, IQ file or
+waveform touches the radio, code checks the span it emits against the EU
+licence-free bands and the band's power limit. Numbers are checked in code, not
+by a model: they are exact and need no network.
+
+A flagged transmit is refused unless the call carries `override_reason`. That
+is the one place a sentence enters the decision, so that is the one place
+TypeSafe is asked: four independent yes/no questions (Noul) in one request -
+conducted, shielded, licensed for this frequency, radiates. It is accepted at
+>= 0.8 on conducted or shielded with radiates < 0.5, or >= 0.8 on licensed.
+The thresholds are chosen, not tuned; there is no labelled set of reasons yet.
+An unreachable TypeSafe refuses, because this only runs on a transmit already
+flagged. No key means the reason is taken at its word and logged as unchecked.
+
+`force=true` overrules all of it - the owner asked that the operator can go
+ahead without a good reason - and turns the refusal into a WARNING in the
+reply and `TX GATE FORCED` in the log. `SDR_MCP_TX_BANDS` still applies after
+`force`; it is the owner's hard limit, the gate is advice.
+
+The key is read from the server's environment (`TYPESAFE_API_KEY`), sent only
+to `api.typesafe.ai`, and never logged. Unit tests mock the HTTP call, so CI
+spends no API calls.
+
 The startup quiesce deliberately touches **attenuation only, not the TX LO**.
 Powering the synthesiser down would silently break an unrelated transmitter — a
 GNU Radio sink, say — that never asked this server for anything: it would stream
@@ -74,6 +99,7 @@ this URI, check the USB Ethernet interface is up.
 | `SDR_MCP_CAPTURE_DIR` | `~/.cache/fishball-sdr` | where `sdr_capture_iq` writes its `.sigmf-data` / `.sigmf-meta` pair |
 | `SDR_MCP_ALLOW_TX` | unset (permitted) | set to `0` to forbid every tool that opens a TX buffer or keys a tone |
 | `SDR_MCP_TX_BANDS` | unset | restrict TX, e.g. `2400-2483.5` (MHz) |
+| `TYPESAFE_API_KEY` | unset | have TypeSafe check `override_reason` on a transmit the safety gate refused |
 | `SDR_MCP_NO_TX_QUIESCE` | unset | leave the transmitter exactly as found |
 
 ## Testing

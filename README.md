@@ -63,6 +63,7 @@ The board's firmware and FPGA build system live in a companion repository,
 | see every tool and what it does | [Tools](#tools) |
 | point it at a board on a different address | [Configuration](#configuration) — `SDR_MCP_URI` |
 | transmit, safely | [Transmitting](#transmitting) — read this one before keying anything |
+| know why a transmit was refused, and how to go ahead anyway | [The safety gate](#the-safety-gate-bands-power-and-overrides) — `override_reason`, `force` |
 | work out what my RF ports are connected to | `sdr_check_rf_setup`, and [Before you transmit](#before-you-transmit-what-is-connected) |
 | turn transmitting off entirely | [Turning transmit off](#turning-transmit-off) — `SDR_MCP_ALLOW_TX=0` |
 | understand why a capture is int16 and what full scale is | [Three design decisions](#three-design-decisions-worth-knowing) |
@@ -222,6 +223,7 @@ like it works and does not.
 | `SDR_MCP_CAPTURE_DIR` | `~/.cache/fishball-sdr` | Where `sdr_capture_iq` writes its `.sigmf-data` / `.sigmf-meta` pair |
 | `SDR_MCP_ALLOW_TX` | unset (**permitted**) | Set to `0` to forbid transmitting |
 | `SDR_MCP_TX_BANDS` | unset | Restrict TX, e.g. `2400-2483.5` (MHz) |
+| `TYPESAFE_API_KEY` | unset | Have [TypeSafe](https://typesafe.ai) check the reason given for overriding the [safety gate](#the-safety-gate-bands-power-and-overrides) |
 | `SDR_MCP_NO_TX_QUIESCE` | unset | Leave the transmitter exactly as found |
 
 `.mcp.json.example` is a drop-in config if you'd rather not use `claude mcp add`.
@@ -272,6 +274,56 @@ The board has two independent transmit chains, TX1 and TX2. `sdr_tx_tone`,
 | `"1"` | TX2 |
 | `"both"` *(default)* | both ports, the same waveform on each |
 
+### The safety gate: bands, power, and overrides
+
+Before `sdr_tx_tone`, `sdr_transmit_iq` or `sdr_transmit_waveform` touches the
+radio, the server checks two things in code:
+
+- **Band.** Everything the transmit emits must sit inside one of the EU
+  licence-free bands: 433.05–434.79 MHz, 863–870 MHz, 2400–2483.5 MHz or
+  5725–5875 MHz. "Everything" includes the leakage at the local oscillator (LO,
+  the carrier frequency the chip is tuned to), the chirp's sweep, and, for an IQ
+  file, the whole width its sample rate allows, because the server cannot see
+  what is in the file.
+- **Power.** The estimated output must stay under that band's legal limit:
+  +10 dBm at 433 MHz, +14 dBm at 868 MHz and 5.8 GHz, +20 dBm at 2.4 GHz. The
+  estimate is +19 dBm at full output, less the attenuation and the amplitude
+  (`scale`). It is not a measurement, and an antenna's gain is not in it.
+
+A transmit that fails either check is **refused**, with the reason. You then
+have two ways on:
+
+| Argument | What happens |
+|---|---|
+| `override_reason="TX1 cabled through 30 dB into RX1, no antenna"` | Transmits, and logs the reason. If `TYPESAFE_API_KEY` is set, [TypeSafe](https://typesafe.ai) reads the reason first and the transmit only goes ahead if it describes a safe setup: cabled into a load or attenuator with nothing radiated, inside a shielded box, or covered by a licence **for this frequency**. "Just testing" does not pass; neither does "I have an amateur licence" at 100 MHz. If TypeSafe cannot be reached, the override is refused. |
+| `force=true` | Transmits anyway, with or without a reason, whatever the gate or TypeSafe said. The reply opens with a **WARNING** naming what was overruled, and the log records it as forced. The gate advises; you decide. |
+
+TypeSafe is only asked about overrides, so a transmit inside the rules never
+waits on the network. Without a key, `override_reason` is taken at its word and
+logged as unchecked. The key goes in the server's environment, like every
+variable here (see below), and is read on every override, so it never needs to
+be in a prompt.
+
+What it looks like, with a key set, asking for a tone at 100 MHz (the FM
+broadcast band) with the reason "just testing, it's fine":
+
+```text
+ERROR: Refusing to transmit a tone: 100.0000-100.1000 MHz is not wholly inside a
+licence-free band (...). TypeSafe (jev-1.13.0) read the override reason as not
+describing a safe setup (conducted 0.03, shielded 0.01, licensed 0.02,
+radiates 0.43). ...
+```
+
+Each number is TypeSafe's probability that the reason says so: that the port is
+cabled with nothing radiated, that it is shielded, that a licence covers this
+frequency, and that it goes out of an antenna. It accepts at 0.8 or above for one
+of the first three, with "radiates" under 0.5 unless the licence covers it.
+Those thresholds are chosen, not tuned.
+
+The gate does not cover `sdr_check_rf_setup`'s −41 dBm probe or
+`sdr_sample_gpio_clock`. `SDR_MCP_TX_BANDS`, if set, still applies on top, and
+`force` does not lift it.
+
 ### Turning transmit off
 
 The variable is read from the **server's** environment at startup, not from the
@@ -304,8 +356,9 @@ actually believes.
 - `cyclic=true` keeps transmitting **after the call returns**. That's the point
   of it, and it still surprises people; `sdr_tx_status` shows what's running.
 - `SDR_MCP_TX_BANDS` restricts transmission to named frequency ranges, e.g.
-  `2400-2483.5` (MHz), on top of everything above.
-- Every transmit call - tones, buffers, the RF-setup probe and the GPIO clock - is logged to stderr with frequency, gain, channel and sample count.
+  `2400-2483.5` (MHz), on top of everything above, including
+  [the safety gate](#the-safety-gate-bands-power-and-overrides) and `force`.
+- Every transmit call - tones, buffers, the RF-setup probe and the GPIO clock - is logged to stderr with frequency, gain, channel and sample count, and every safety-gate decision with its reason (`TX GATE pass`, `refused`, `override ACCEPTED`/`REJECTED`, `FORCED`).
 
 > **A TX→RX loopback without an attenuator will destroy your receiver.** The
 > receiver is the fragile end: the AD9361's RX input is rated to roughly

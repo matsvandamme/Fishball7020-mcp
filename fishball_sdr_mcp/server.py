@@ -23,7 +23,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
-from . import dsp, errors, formatting, sigmf
+from . import dsp, errors, formatting, sigmf, txgate
 from . import radio as radio_module
 from .radio import PHY, PROBE_ATTEN_DB, TX, TX_LO, Radio, tx_allowed
 
@@ -45,7 +45,13 @@ server = MCPServer(
            "reports what the ports appear to be attached to, and says plainly what "
            "it cannot determine. This board reaches about +19 dBm and covers the FM "
            "broadcast band, where transmitting without a licence is illegal, so the "
-           "operator is responsible for what leaves the antenna port. Set "
+           "operator is responsible for what leaves the antenna port. A safety "
+           "gate refuses tones, IQ files and waveforms outside the EU licence-free "
+           "bands (433, 868, 2400, 5800 MHz) or over their power limits. If the "
+           "operator says the setup is safe, retry with override_reason describing "
+           "it (TypeSafe checks it when TYPESAFE_API_KEY is set). Pass force=true "
+           "only when the operator explicitly tells you to transmit anyway: it "
+           "overrules the gate and the reply carries a warning. Set "
            "SDR_MCP_ALLOW_TX=0 to turn transmitting off."
            if tx_allowed() else
            "TRANSMITTING IS DISABLED on this server (SDR_MCP_ALLOW_TX=0): every tool "
@@ -153,6 +159,20 @@ def prune_captures(keep: int | None = None) -> int:
 def fail(exc: BaseException) -> str:
     log(f"error: {exc!r}")
     return f"ERROR: {errors.describe(exc)}"
+
+
+def _gate(what: str, low_hz: float, high_hz: float, tx_gain_db: float,
+          scale: float, override_reason: str | None,
+          force: bool) -> txgate.Decision:
+    """Band, power and override check, before the radio is touched."""
+    decision = txgate.check(what, low_hz, high_hz, tx_gain_db, scale,
+                            override_reason, force)
+    log(decision.log_line)
+    return decision
+
+
+def _gate_note(decision: txgate.Decision, md: str) -> str:
+    return md + (f"\n\n> **Safety gate:** {decision.message}" if decision.message else "")
 
 
 # ---------------------------------------------------------------------------
@@ -1042,11 +1062,28 @@ def sdr_tx_tone(
     channel: Annotated[Literal["0", "1", "both"], Field(
         description="Which transmit port: channel 0 (TX1), channel 1 (TX2), "
                     "or both.")] = "both",
+    override_reason: Annotated[str | None, Field(
+        description="Only for a transmit the safety gate refuses (outside the "
+                    "EU licence-free bands, or over their power limit): say why "
+                    "it is safe, e.g. 'TX1 cabled through 30 dB into RX1, no "
+                    "antenna'. Checked by TypeSafe when TYPESAFE_API_KEY is set, "
+                    "and logged.")] = None,
+    force: Annotated[bool, Field(
+        description="Transmit even if the safety gate advises against it, with "
+                    "or without override_reason. Only when the operator has "
+                    "explicitly said to; the reply carries a warning and the "
+                    "call is logged as forced.")] = False,
     response_format: Format = "markdown",
 ) -> str:
     if not tx_allowed():
         return "ERROR: " + errors.tx_gate_message("transmit a tone")
     try:
+        # The LO leaks through as well as the tone, so both must be in band.
+        gate = _gate("transmit a tone", min(lo_hz, lo_hz + tone_offset_hz),
+                     max(lo_hz, lo_hz + tone_offset_hz), tx_gain_db, scale,
+                     override_reason, force)
+        if not gate.allowed:
+            return "ERROR: " + gate.message
         r = radio()
         r.check_tx_frequency(lo_hz + tone_offset_hz)
         r.stop_buffer()                 # a running IQ buffer would otherwise keep playing
@@ -1066,9 +1103,9 @@ def sdr_tx_tone(
                    "tx_gain_db": applied_gain}
         return formatting.render(
             payload,
-            f"## Transmitting\n\nTone at **{formatting.hz(lo_hz + tone_offset_hz)}** "
+            _gate_note(gate, f"## Transmitting\n\nTone at **{formatting.hz(lo_hz + tone_offset_hz)}** "
             f"(LO {formatting.hz(lo_hz)} + {formatting.hz(tone_offset_hz)}), "
-            f"scale {scale}.\n\n> Continues until `sdr_tx_disable` is called.",
+            f"scale {scale}.\n\n> Continues until `sdr_tx_disable` is called."),
             response_format)
     except Exception as exc:
         return fail(exc)
@@ -1111,6 +1148,17 @@ def sdr_transmit_iq(
     channel: Annotated[Literal["0", "1", "both"], Field(
         description="Which transmit port: channel 0 (TX1), channel 1 (TX2), or "
                     "both, which sends the same waveform out of each.")] = "both",
+    override_reason: Annotated[str | None, Field(
+        description="Only for a transmit the safety gate refuses (outside the "
+                    "EU licence-free bands, or over their power limit): say why "
+                    "it is safe, e.g. 'TX1 cabled through 30 dB into RX1, no "
+                    "antenna'. Checked by TypeSafe when TYPESAFE_API_KEY is set, "
+                    "and logged.")] = None,
+    force: Annotated[bool, Field(
+        description="Transmit even if the safety gate advises against it, with "
+                    "or without override_reason. Only when the operator has "
+                    "explicitly said to; the reply carries a warning and the "
+                    "call is logged as forced.")] = False,
     response_format: Format = "markdown",
 ) -> str:
     if not tx_allowed():
@@ -1120,6 +1168,14 @@ def sdr_transmit_iq(
         if not src.is_file():
             raise ValueError(f"no such file: {src}")
         r = radio()
+        # The file's content is unknown, so assume it fills the whole band the
+        # sample rate allows.
+        half = (sample_rate_hz or r.read_int(PHY, "voltage0", "sampling_frequency",
+                                             output=True)) / 2
+        gate = _gate("transmit an IQ file", lo_hz - half, lo_hz + half,
+                     tx_gain_db, scale, override_reason, force)
+        if not gate.allowed:
+            return "ERROR: " + gate.message
         r.check_tx_frequency(lo_hz)
 
         iq = _load_iq(src, file_format)
@@ -1182,7 +1238,7 @@ def sdr_transmit_iq(
         if truncated:
             md += (f"\n\n> File was longer than max_samples; only the first "
                    f"{max_samples} samples were sent.")
-        return formatting.render(payload, md, response_format)
+        return formatting.render(payload, _gate_note(gate, md), response_format)
     except Exception as exc:
         return fail(exc)
 
@@ -1216,6 +1272,17 @@ def sdr_transmit_waveform(
     channel: Annotated[Literal["0", "1", "both"], Field(
         description="Which transmit port: channel 0 (TX1), channel 1 (TX2), or "
                     "both, which sends the same waveform out of each.")] = "both",
+    override_reason: Annotated[str | None, Field(
+        description="Only for a transmit the safety gate refuses (outside the "
+                    "EU licence-free bands, or over their power limit): say why "
+                    "it is safe, e.g. 'TX1 cabled through 30 dB into RX1, no "
+                    "antenna'. Checked by TypeSafe when TYPESAFE_API_KEY is set, "
+                    "and logged.")] = None,
+    force: Annotated[bool, Field(
+        description="Transmit even if the safety gate advises against it, with "
+                    "or without override_reason. Only when the operator has "
+                    "explicitly said to; the reply carries a warning and the "
+                    "call is logged as forced.")] = False,
     response_format: Format = "markdown",
 ) -> str:
     if not tx_allowed():
@@ -1223,8 +1290,18 @@ def sdr_transmit_waveform(
     try:
         import random
         r = radio()
-        r.check_tx_frequency(lo_hz)
         rate = r.read_int(PHY, "voltage0", "sampling_frequency", output=True)
+        # Where each shape puts energy, LO leakage included. The noise is
+        # white at the sample rate, whatever bandwidth_hz says.
+        low, high = {"tone": (lo_hz, lo_hz + bandwidth_hz),
+                     "chirp": (lo_hz, lo_hz + bandwidth_hz),
+                     "two_tone": (lo_hz - bandwidth_hz / 2, lo_hz + bandwidth_hz / 2),
+                     "noise": (lo_hz - rate / 2, lo_hz + rate / 2)}[shape]
+        gate = _gate(f"transmit a {shape} waveform", min(low, high), max(low, high),
+                     tx_gain_db, scale, override_reason, force)
+        if not gate.allowed:
+            return "ERROR: " + gate.message
+        r.check_tx_frequency(lo_hz)
         n = samples
         iq: list[complex] = []
         # A cyclic buffer must hold a whole number of cycles, or the phase
@@ -1276,8 +1353,8 @@ def sdr_transmit_waveform(
                 ("Peak amplitude", f"{scale} of full scale"),
                 ("TX gain", f"{applied_gain} dB")]
         return formatting.render(
-            payload, "## Transmitting waveform\n\n" + formatting.table(rows)
-            + "\n\n> **Still transmitting.** Repeats until `sdr_tx_disable` is called.",
+            payload, _gate_note(gate, "## Transmitting waveform\n\n" + formatting.table(rows)
+            + "\n\n> **Still transmitting.** Repeats until `sdr_tx_disable` is called."),
             response_format)
     except Exception as exc:
         return fail(exc)

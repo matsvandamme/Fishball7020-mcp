@@ -33,6 +33,17 @@ because it is an easy mistake to make while debugging `iiod.py`.
 tool works unless `SDR_MCP_ALLOW_TX=0` is set in the *server's* environment.
 It was opt-in; the board's owner asked for it available without ceremony.
 
+**A safety gate advises before each tone, IQ file or waveform** (`txgate.py`).
+Code refuses a transmit that leaves the EU licence-free bands (433.05–434.79,
+863–870, 2400–2483.5, 5725–5875 MHz; LO leakage, chirp sweep and an IQ file's
+full sample-rate width all count) or exceeds the band's power limit, estimated
+as +19 dBm + gain + 20·log10(scale). `override_reason` gets past it; with
+`TYPESAFE_API_KEY` set, TypeSafe's Jev model must first read the reason as a
+safe setup (conducted/no antenna, shielded, or licensed *for that frequency*),
+and a TypeSafe outage refuses. `force=true` transmits regardless, with a
+WARNING in the reply and `TX GATE FORCED` in the log - use it only when the
+operator has said to. The operator decides; the gate only advises.
+
 **So check what is connected before transmitting.** `sdr_check_rf_setup`
 reports what the ports appear to be attached to — and states the limit plainly:
 the transmit socket has no detector, so whether an antenna is on *it* cannot be
@@ -277,8 +288,10 @@ match against the firmware and no C extension to build.
 - Validate inputs against the radio's own `*_available` attributes rather than
   hardcoding ranges, so an illegal request is refused with the legal options.
 - Render through `formatting.render`, which enforces `CHARACTER_LIMIT`.
-- Anything that transmits: check the gate, check `SDR_MCP_TX_BANDS`, log the
-  call to stderr with frequency, gain and sample count.
+- Anything that transmits: check the gate, run `_gate(...)` with every
+  frequency it emits (LO included) and pass `override_reason` and `force`
+  through, check `SDR_MCP_TX_BANDS`, log the call to stderr with frequency,
+  gain and sample count.
 - **Add the tool's name to `EXPECTED_TOOLS` in `evaluation/smoke_test.py`, in
   the same commit.** The smoke test asserts the advertised set matches that
   list by name. Forgetting it is not theoretical: `sdr_rfid_field` landed
