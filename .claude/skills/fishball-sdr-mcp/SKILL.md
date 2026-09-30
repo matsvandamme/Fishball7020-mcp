@@ -101,11 +101,15 @@ boot; it is a separate switch from `tx_quiesce`.
 three produced a confident wrong answer on the devkit bench on 2026-09-30, and any of
 them can turn up in an answer this server helps write.
 
-- **A HackRF's own 25 MHz reference comb puts a spur on exactly 2400.000 MHz** (96 x
-  25 MHz), 8 dB over its floor with nothing connected. That is the frequency this board
-  is usually tuned to. Separate them by sweeping the transmit attenuator - a real
-  emission tracks it - by retuning the receive LO, and by taking one capture with the
-  receiver's input open.
+- **Something sits on exactly 2400.000 MHz** at 8 dB over the floor even with nothing
+  connected to the receiver - and it is NOT established whose. 2400.000 is 96 x 25 MHz
+  (a HackRF reference), 60 x 40 MHz (this board's Y3 VCTCXO), 48 x 50 MHz, 100 x 24 MHz
+  and 5 x 480 MHz (USB). An earlier version of this file blamed the instrument; that is
+  withdrawn. That is the frequency this board is usually tuned to, so present and
+  absent read alike there. Sweeping the transmit attenuator, retuning the receive LO
+  and opening the receiver's input establish only what it is NOT - none of the three
+  tests the board. The two that would: capture with the **board powered off**, and
+  terminate the receiver in **50 ohm** rather than leaving it open.
 - **A stream of zeros is not an RF signal.** I = 0, Q = 0 emits nothing but residual
   leakage, so a zero-fed buffer cannot serve as a positive control. Use a real tone.
 - **The peak of ONE FFT of noise sits 8-16 dB above the median**, which reads exactly
