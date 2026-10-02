@@ -422,7 +422,7 @@ def sdr_configure_rx(
         "to cpack and is then sampled at one eighth the rate with no anti-alias "
         "filter of its own, so engaging this aliases RX2 by about 70 dB. Devkit "
         "builds since patch 0021 - the default - filter both channels.\n\n"
-        "NOTHING ON THE RADIO REPORTS WHICH OF THE TWO IS LOADED. The wiring is inside the bitstream and no IIO attribute exposes it, so sdr_get_status cannot answer this and neither can this tool - fpga_filter_engaged is the runtime mux state, not the channel count. Ask the operator, or have them run `./devkit verify`, which reads it out of the built block design. When you cannot establish it, say so and state which firmware you assumed rather than presenting an RX2 result as unconditional.\n\n"
+        "NOTHING ON THE RADIO REPORTS WHICH OF THE TWO IS LOADED. The wiring is inside the bitstream and no IIO attribute exposes it, so sdr_get_status cannot answer this and neither can this tool - fpga_filter_engaged is the runtime mux state, not the channel count. Ask the operator, or have them run `./devkit verify --target factory`, which reads it out of the built block design. When you cannot establish it, say so and state which firmware you assumed rather than presenting an RX2 result as unconditional.\n\n"
         "The devkit's optional channelizer patch swaps the decimator's coefficients "
         "for a sharp 321-tap FIR; the tool is the same either way.\n\n"
         "Bypassing is the way to A/B whether the filter is really doing anything: a "
