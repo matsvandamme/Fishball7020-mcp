@@ -69,6 +69,7 @@ The board's firmware and FPGA build system live in a companion repository,
 | understand why a capture is int16 and what full scale is | [Three design decisions](#three-design-decisions-worth-knowing) |
 | run the tests | [Testing](#testing) |
 | know what this board actually measures like | [Notes from the hardware](#notes-from-the-hardware) |
+| decode aircraft (ADS-B, 1090 MHz) | the devkit's [`./devkit adsb`](https://github.com/matsvandamme/fishball7020-fpga-devkit/blob/main/docs/adsb.md): a live window, receive only. There is no ADS-B tool here, but a capture from here decodes there: `sdr_configure_rx` to 1090 MHz at 4 MSPS with the FPGA filter off, `sdr_capture_iq`, then `./devkit adsb --replay <file>.sigmf-meta --text` |
 | drive this board from MATLAB or Simulink instead | the devkit's [MATLAB guide](https://github.com/matsvandamme/fishball7020-fpga-devkit/blob/main/docs/matlab.md) and its [Simulink blocks](https://github.com/matsvandamme/fishball7020-fpga-devkit/tree/main/examples/matlab/06-simulink) |
 | change the firmware itself, not just drive it | the sibling [fishball7020-fpga-devkit](https://github.com/matsvandamme/fishball7020-fpga-devkit) |
 

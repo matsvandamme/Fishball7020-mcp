@@ -265,6 +265,18 @@ cannot be retransmitted.
 but transmit takes the **full 16 bits**. Scaling transmit to ±2047 emits 24 dB
 low. This asymmetry is measured, not assumed.
 
+## Aircraft (ADS-B) are decoded in the devkit, not here
+
+This server has no ADS-B tool. Point a user who wants aircraft at the devkit's
+`./devkit adsb` (`docs/adsb.md`): RX1 or RX2 (`--channel 2`) at 1090 MHz,
+4 MSPS, a live table, receive only. A capture from here decodes there, because
+both write SigMF `ci16_le`. Use 1090 MHz, 4 MSPS (a multiple of 2 MSPS is
+required) and the FPGA filter off (`sdr_set_fpga_filter` false); a decimated
+capture smears the 0.5 us pulses. Then run
+`./devkit adsb --replay <file>.sigmf-meta --text`. `sdr_capture_iq`'s ceiling
+of 4,194,304 samples is about one second at 4 MSPS: enough for a few messages
+from each aircraft in range.
+
 ## Layout
 
 | | |
