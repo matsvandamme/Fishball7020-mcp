@@ -288,7 +288,10 @@ it enforces the devkit's transmit rules itself: a `tx-guard` affirmation per
 channel, `pad_db >= 20` louder than -10 dB and for any TransmitCapture,
 attenuation written after the buffer starts, mute before release. Its worked
 example is `tools/automation/examples/loopback_sweep.py`
-(`docs/radio/sweep-a-loopback.md`).
+(`docs/radio/sweep-a-loopback.md`). Direction finding with more than one board
+is its `examples/beamformer.py` (`docs/radio/beamform-two-boards.md`): boards on
+one reference clock, calibrated with a beacon. This server cannot do it: it
+talks to one board, and a shared reference clock is a hardware rework.
 
 It and this server drive the same radio by different routes (it uses sysfs
 and libiio in-process on the board; this server talks to `iiod`):
