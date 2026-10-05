@@ -59,7 +59,7 @@ The board's firmware and FPGA build system live in a companion repository,
 
 | I want to… | Start here |
 |---|---|
-| get it running with Claude Desktop or Claude Code | [Quick start](#quick-start) |
+| get it running with Claude Desktop or Claude Code | [Quick start](#quick-start), or the devkit's walkthrough, [Claude and the radio](https://matsvandamme.github.io/fishball7020-fpga-devkit/mcp-server/) |
 | see every tool and what it does | [Tools](#tools) |
 | point it at a board on a different address | [Configuration](#configuration) — `SDR_MCP_URI` |
 | transmit, safely | [Transmitting](#transmitting) — read this one before keying anything |
@@ -71,7 +71,7 @@ The board's firmware and FPGA build system live in a companion repository,
 | know what this board actually measures like | [Notes from the hardware](#notes-from-the-hardware) |
 | decode aircraft (ADS-B, 1090 MHz) | the devkit's [`./devkit adsb`](https://github.com/matsvandamme/fishball7020-fpga-devkit/blob/main/docs/adsb.md): a live window, receive only. There is no ADS-B tool here, but a capture from here decodes there: `sdr_configure_rx` to 1090 MHz at 4 MSPS with the FPGA filter off, `sdr_capture_iq`, then `./devkit adsb --replay <file>.sigmf-meta --text` |
 | script a repeatable bench measurement (set, transmit, capture, fetch) from Python | the devkit's [automation server](https://github.com/matsvandamme/fishball7020-fpga-devkit/blob/main/docs/automation.md): gRPC on the board, port 7020, with the transmit rules enforced on the board; a [complete example](https://github.com/matsvandamme/fishball7020-fpga-devkit/blob/main/docs/radio/sweep-a-loopback.md) sweeps both loopbacks to a CSV, and a [receive beamformer](https://github.com/matsvandamme/fishball7020-fpga-devkit/blob/main/docs/radio/beamform-two-boards.md) uses several boards on one reference clock as one antenna array. It and this server share one radio: while either holds a buffer, the other is refused |
-| see the board's links, die temperatures, radio settings and CI in a side pane while you work in Claude Code | the devkit's [Claude Code pane](https://github.com/matsvandamme/fishball7020-fpga-devkit/blob/main/docs/claude-code-pane.md): `./devkit claude-pane install`, then `/fishball`. It only reads and never holds a buffer, so it runs alongside this server |
+| see the board's links, die temperatures, radio settings and CI in a side pane while you work in Claude Code | the devkit's [Claude Code pane](https://github.com/matsvandamme/fishball7020-fpga-devkit/blob/main/docs/claude-code-pane.md): `./devkit claude-pane start` opens Claude Code with it. It only reads and never holds a buffer, so it runs alongside this server |
 | drive this board from MATLAB or Simulink instead | the devkit's [MATLAB guide](https://github.com/matsvandamme/fishball7020-fpga-devkit/blob/main/docs/matlab.md) and its [Simulink blocks](https://github.com/matsvandamme/fishball7020-fpga-devkit/tree/main/examples/matlab/06-simulink) |
 | change the firmware itself, not just drive it | the sibling [fishball7020-fpga-devkit](https://github.com/matsvandamme/fishball7020-fpga-devkit) |
 
@@ -84,8 +84,12 @@ cd Fishball7020-mcp
 python3 -m venv .venv
 .venv/bin/pip install -e .
 
-claude mcp add fishball-sdr -- "$PWD/.venv/bin/fishball-sdr-mcp"
+claude mcp add -s user fishball-sdr -- "$PWD/.venv/bin/fishball-sdr-mcp"
 ```
+
+`-s user` registers the server for every Claude Code session you start.
+Without it, `claude mcp add` registers it only for sessions started in this
+folder, so a session in the devkit, say, would not see it.
 
 `-e .` installs the package into the venv, which puts a `fishball-sdr-mcp`
 launcher on the venv's `bin/`. Use that rather than `python -m
@@ -206,6 +210,11 @@ measured, not assumed — see [Notes from the hardware](#notes-from-the-hardware
 |---|---|---|
 | `SDR_MCP_URI` | `ip:fishball.local` | Where the board is. A name, not an address, so it survives DHCP moving the board |
 | `SDR_MCP_TIMEOUT` | `10` | Socket timeout, seconds |
+| `SDR_MCP_CAPTURE_DIR` | `~/.cache/fishball-sdr` | Where `sdr_capture_iq` writes its `.sigmf-data` / `.sigmf-meta` pair |
+| `SDR_MCP_ALLOW_TX` | unset (**permitted**) | Set to `0` to forbid transmitting |
+| `SDR_MCP_TX_BANDS` | unset | Restrict TX, e.g. `2400-2483.5` (MHz) |
+| `TYPESAFE_API_KEY` | unset | Have [TypeSafe](https://typesafe.ai) check the reason given for overriding the [safety gate](#the-safety-gate-bands-power-and-overrides) |
+| `SDR_MCP_NO_TX_QUIESCE` | unset | Leave the transmitter exactly as found |
 
 **If your board is not on `192.168.2.1`.** That address is the USB Ethernet
 gadget. A board plugged into a router has a second, different address on `eth0`,
@@ -232,11 +241,6 @@ Changing the board's own address is a devkit matter rather than an MCP one:
 [changing the board's IP address](https://github.com/matsvandamme/fishball7020-fpga-devkit/blob/main/docs/networking.md)
 covers the four routes, including why editing `uEnv.txt` on the SD card looks
 like it works and does not.
-| `SDR_MCP_CAPTURE_DIR` | `~/.cache/fishball-sdr` | Where `sdr_capture_iq` writes its `.sigmf-data` / `.sigmf-meta` pair |
-| `SDR_MCP_ALLOW_TX` | unset (**permitted**) | Set to `0` to forbid transmitting |
-| `SDR_MCP_TX_BANDS` | unset | Restrict TX, e.g. `2400-2483.5` (MHz) |
-| `TYPESAFE_API_KEY` | unset | Have [TypeSafe](https://typesafe.ai) check the reason given for overriding the [safety gate](#the-safety-gate-bands-power-and-overrides) |
-| `SDR_MCP_NO_TX_QUIESCE` | unset | Leave the transmitter exactly as found |
 
 `.mcp.json.example` is a drop-in config if you'd rather not use `claude mcp add`.
 
@@ -349,7 +353,8 @@ MCP registration:
 
 ```bash
 # run from: anywhere - the path below is absolute
-claude mcp add fishball-sdr -e SDR_MCP_ALLOW_TX=0 -- \
+claude mcp remove -s user fishball-sdr
+claude mcp add -s user fishball-sdr -e SDR_MCP_ALLOW_TX=0 -- \
     /absolute/path/to/Fishball7020-mcp/.venv/bin/fishball-sdr-mcp
 ```
 
