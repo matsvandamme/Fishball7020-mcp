@@ -33,8 +33,10 @@ _ERRNO_ADVICE = {
         "no such channel or attribute. Run sdr_list_devices to see the exact "
         "names; they are case-sensitive and channel ids look like 'voltage0'."),
     errno.EBUSY: (
-        "the device is busy - something else holds its buffer. Another capture "
-        "or a running GNU Radio flowgraph is the usual cause."),
+        "the device is busy - something else holds its buffer. Another capture, "
+        "a running GNU Radio flowgraph, or the devkit's automation server is the "
+        "usual cause; on devkit firmware, ./devkit automation status names the "
+        "process that holds it."),
     errno.EBADF: (
         "the buffer is not open. Capture tools open and close it themselves, so "
         "this usually means a previous capture died partway."),

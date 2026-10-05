@@ -277,6 +277,34 @@ capture smears the 0.5 us pulses. Then run
 of 4,194,304 samples is about one second at 4 MSPS: enough for a few messages
 from each aircraft in range.
 
+## Scripted measurements belong to the devkit's automation server
+
+When a user wants a measurement they can run again (a sweep, a regression
+check, a script for the bench), point them at the devkit's automation server
+(`docs/automation.md`, `./devkit automation install`): a gRPC server on the
+board, port 7020, with a Python client. It has `Transmit` and
+`TransmitCapture` (play a waveform and record both receivers in one call), and
+it enforces the devkit's transmit rules itself: a `tx-guard` affirmation per
+channel, `pad_db >= 20` louder than -10 dB and for any TransmitCapture,
+attenuation written after the buffer starts, mute before release. Its worked
+example is `tools/automation/examples/loopback_sweep.py`
+(`docs/radio/sweep-a-loopback.md`).
+
+It and this server drive the same radio by different routes (it uses sysfs
+and libiio in-process on the board; this server talks to `iiod`):
+
+- **One buffer, one owner.** While the automation server captures or
+  transmits, a capture or transmit here fails with EBUSY, and while this
+  server holds a buffer through `iiod`, the automation server refuses and
+  names `iiod` as the holder. `./devkit automation status` lists the holders.
+- **Mute always works from either side.** `sdr_tx_disable` during an
+  automation transmit ends it: that server reads the channel at the floor and
+  stops with "the board muted TXn by itself". Raising attenuation from here
+  during one makes it mute both channels and fail the call.
+- **Settings are shared.** An `sdr_tune` or `sdr_configure_rx` here changes
+  what a running automation script measures, without telling it. Do not drive
+  the radio from here while a user's script is running.
+
 ## Layout
 
 | | |
