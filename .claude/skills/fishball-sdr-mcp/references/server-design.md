@@ -88,13 +88,13 @@ full stop, because that is an explicit request.
 `errors.py` maps IIOD's negative errnos to something actionable: `-19 ENODEV` →
 the device is not present, is this the right firmware; `-22 EINVAL` → the value
 was rejected, read the matching `*_available`; connection refused → no IIOD at
-this URI, check the USB Ethernet interface is up.
+this URI: check the name resolves and the link (USB gadget, router, or a direct cable with the PC serving DHCP) is up.
 
 ## Configuration
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `SDR_MCP_URI` | `ip:192.168.2.1` | where the board is |
+| `SDR_MCP_URI` | `ip:fishball.local` | where the board is: a name, so it survives DHCP moving the board |
 | `SDR_MCP_TIMEOUT` | `10` | socket timeout, seconds |
 | `SDR_MCP_CAPTURE_DIR` | `~/.cache/fishball-sdr` | where `sdr_capture_iq` writes its `.sigmf-data` / `.sigmf-meta` pair |
 | `SDR_MCP_ALLOW_TX` | unset (permitted) | set to `0` to forbid every tool that opens a TX buffer or keys a tone |

@@ -74,7 +74,8 @@ def describe(exc: BaseException) -> str:
             f"Cannot reach the radio at {_URI_HINT}. Check the board is powered, and "
             f"that the name resolves - mDNS needs avahi on this machine. "
             f"sdr_find_board looks for it and says what to set SDR_MCP_URI to; "
-            f"ip:192.168.2.1 is the USB gadget if a cable is attached. "
+            f"ip:192.168.2.1 is the USB gadget, if a USB cable is attached and this "
+            f"machine's USB network is up. "
             f"({type(exc).__name__}: {exc})")
 
     if isinstance(exc, ValueError):

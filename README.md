@@ -97,7 +97,8 @@ Note the venv records absolute paths. If you move this directory, delete
 Then ask for `sdr_get_status`. If the board answers, you're done.
 
 Not sure where your board is? `iio_attr -S` scans and prints it. The default is
-`ip:192.168.2.1`, the USB Ethernet gadget.
+`ip:fishball.local`, the name the board announces on whichever link it is on:
+USB, your router, or a cable straight to your PC.
 
 ## Working on this server
 
@@ -211,6 +212,14 @@ and you do not have to know it — the board advertises itself over mDNS, so
 `ip:fishball.local` works as a URI and keeps working when the address
 changes. (`fishball` is the devkit's default hostname; a board on an
 unpatched rootfs still answers to `pluto.local`.)
+
+**A board cabled straight to your PC** has no router to give it an address:
+let the PC serve DHCP (NetworkManager's shared mode), as in the devkit's
+[a direct cable to your PC](https://github.com/matsvandamme/fishball7020-fpga-devkit/blob/main/docs/networking.md#a-direct-cable-to-your-pc).
+`ip:fishball.local` then finds it there, and `sdr_find_board` checks this
+machine's neighbour table as well. The cable is not much faster: the board's
+CPU, not gigabit, limits streaming, to 12 MS/s at 16 bits through `iiod`
+([measured](https://github.com/matsvandamme/fishball7020-fpga-devkit/blob/main/docs/streaming-paths.md#on-a-direct-cable)).
 
 ```bash
 # run from: your HOST

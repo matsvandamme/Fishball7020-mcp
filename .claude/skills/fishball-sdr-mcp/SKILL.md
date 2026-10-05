@@ -2,7 +2,7 @@
 name: fishball-sdr-mcp
 description: Work on the MCP server for the Fishball7020 / PlutoSky SDR (Zynq-7020 + AD9361) - adding or changing tools, the libiio/IIOD client, DSP and spectrum code, response formatting, the transmit gate, and the evaluation and smoke tests. Use when editing this server, when a tool returns wrong levels or wrong frequencies, when a capture times out, or when anything here transmits. Carries the hardware facts a server author keeps needing - this board has a power amplifier and its receive port is the fragile end, receive is 12-bit while transmit is 16-bit, the AD9361 gain label is not proportional to gain, and stdout belongs to JSON-RPC so a stray print breaks the protocol.
 license: GPL-2.0
-compatibility: Python 3.10+ and the mcp SDK. A board reachable over libiio (default ip:192.168.2.1) is needed only for --live tests; everything else runs without hardware.
+compatibility: Python 3.10+ and the mcp SDK. A board reachable over libiio (default ip:fishball.local) is needed only for --live tests; everything else runs without hardware.
 metadata:
   repository: Fishball7020-mcp
   companion: fishball7020-fpga-devkit
@@ -57,10 +57,12 @@ hostname (its `firmware/patches/0013`); a board on an older rootfs answers to
 use, and the DHCP hostname a router displays, which stock firmware never sends.
 
 **`sdr_find_board` is the answer to "it cannot reach the radio".** The default
-`ip:192.168.2.1` is the USB gadget; a board on Ethernet with DHCP is elsewhere
-and the only symptom is a connection error. It tries the default, `fishball.local`,
-`pluto.local`, `fishball.local` and up to 16 ARP neighbours concurrently with an
-8 s deadline,
+`ip:fishball.local` follows the board over USB, a router or a cable straight to
+the PC (the PC serving DHCP), but needs mDNS on this machine; `192.168.2.1` is
+only the USB gadget, and only while the PC's USB network is up. When the name
+fails, the only symptom is a connection error. It tries the configured URI,
+`192.168.2.1`, `fishball.local`, `Fishball7020.local`, `pluto.local` and up to
+16 ARP neighbours concurrently with an 8 s deadline,
 and reports `hw_model` plus what to set `SDR_MCP_URI` to. A file error (missing
 IQ file, unwritable capture dir) is reported as a file problem, not as
 "cannot reach the radio" - `errors.describe` tells them apart.
